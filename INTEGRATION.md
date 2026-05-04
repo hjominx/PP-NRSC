@@ -242,35 +242,35 @@ python realtime_detector.py
 
 ---
 
-## 📚 파일 구조
+## 파일 구조
 
 ```
 /nrsc/
-├── muse_inference_api.py        # ✨ FastAPI 서버 (Step 2)
+├── muse_inference_api.py        # FastAPI 서버 (Step 2)
 ├── test_api.py                  # 테스트 (API 검증)
-├── drowsiness_scorer.py         # ✨ 점수화 로직 (Step 3) - 새로운 파일
-├── realtime_detector.py         # ✨ 실시간 감지 + UI (Step 4) - 새로운 파일
+├── drowsiness_scorer.py         # 점수화 로직 (Step 3) - 새로운 파일
+├── realtime_detector.py         # 실시간 감지 + UI (Step 4) - 새로운 파일
 ├── README.md                    # (원본)
-└── INTEGRATION.md               # ← 이 파일
+└── INTEGRATION.md               # 현재 파일
 ```
 
 ---
 
-## 💬 핵심 메시지
+## 핵심 메시지
 
-> **당신이 할 일**: 
-> 1. FastAPI 서버에서 받은 `prob_raw` / `prob_scaled` / `state`
-> 2. `DrowsinessScorer`로 점수화
-> 3. 위험도별 액션 (경고/기록/서버 전송)
-> 
-> **FastAPI가 이미 수행하는 일**: 
-> - 데이터 입력 → 전처리 → 모델 변환 → 확률/상태 반환
-> 
-> 이제 당신은 **점수화와 UI만** 신경 쓰면 끝! 🎉
+체크해야 할 일
+1. FastAPI 서버에서 받은 `prob_raw` / `prob_scaled` / `state`
+2. `DrowsinessScorer`로 점수화
+3. 위험도별 액션 (경고/기록/서버 전송)
+
+FastAPI가 이미 수행하는 일:
+- 데이터 입력 → 전처리 → 모델 변환 → 확률/상태 반환
+
+이제 점수화와 UI만 신경 쓰면 끝이다.
 
 ---
 
-## 🆘 트러블슈팅
+## 트러블슈팅
 
 | 문제 | 해결 |
 |------|------|
