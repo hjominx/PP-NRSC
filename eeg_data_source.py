@@ -17,6 +17,8 @@ from typing import Optional, Callable
 from collections import deque
 import threading
 import json
+import time
+import numpy as np
 
 
 @dataclass
@@ -175,25 +177,39 @@ class MUSE2Reader(EEGReader):
         self.device_name = device_name
         self.stream = None
         self.sample_rate = 256
-        
-        # 이 부분은 MUSE2 팀이 실제로 구현:
-        # from pylsl import StreamInlet, resolve_stream
-        # self.inlet = None
+        self.inlet = None
+        self._simulate = False
     
     def connect(self) -> bool:
         """LSL 스트림 연결"""
         try:
-            # TODO: MUSE2 팀이 구현
-            # from pylsl import resolve_stream, StreamInlet
-            # streams = resolve_stream('type', 'EEG')
-            # self.inlet = StreamInlet(streams[0])
-            
-            # 임시: 연결 성공 시뮬레이션
+            # 우선 pylsl이 설치되어 있으면 LSL 스트림을 시도한다.
+            try:
+                from pylsl import resolve_stream, StreamInlet
+            except Exception:
+                resolve_stream = None
+                StreamInlet = None
+
+            if resolve_stream is not None and StreamInlet is not None:
+                streams = resolve_stream('type', 'EEG')
+                if not streams:
+                    # LSL 스트림이 없으면 시뮬레이션 모드로 전환
+                    self._simulate = True
+                else:
+                    self.inlet = StreamInlet(streams[0])
+                    self._simulate = False
+            else:
+                # pylsl 미설치: 시뮬레이션 모드
+                self._simulate = True
+
             self.is_connected = True
-            print(f"✅ {self.name}: {self.device_name} 연결됨")
+            if self._simulate:
+                print(f"{self.name}: pylsl 미설치 또는 스트림 미발견 — 시뮬레이션 모드")
+            else:
+                print(f"{self.name}: LSL 스트림에 연결됨")
             return True
         except Exception as e:
-            print(f"❌ {self.name}: 연결 실패 - {e}")
+            print(f"{self.name}: 연결 실패 - {e}")
             return False
     
     def disconnect(self):
@@ -219,8 +235,32 @@ class MUSE2Reader(EEGReader):
                 metadata={"battery": ..., "quality": ...}
             )
         """
-        # TODO: MUSE2 팀이 실제 구현 (위 예제 참고)
-        raise NotImplementedError("MUSE2 팀이 구현 필요")
+        # 실제 LSL 스트림에서 읽기
+        if self._simulate:
+            # 시뮬레이션 신호: 알파(10Hz)+베타(20Hz)+노이즈
+            n = 256
+            t = np.arange(n) / float(self.sample_rate)
+            af7 = (15.0 * np.sin(2 * np.pi * 10 * t) + 5.0 * np.sin(2 * np.pi * 20 * t) + np.random.normal(0, 8, n)).astype(float).tolist()
+            af8 = (12.0 * np.sin(2 * np.pi * 10 * t + 0.5) + 4.0 * np.sin(2 * np.pi * 20 * t) + np.random.normal(0, 8, n)).astype(float).tolist()
+            return EEGChunk(af7=af7, af8=af8, timestamp=time.time(), sequence_id=self.chunk_count)
+
+        try:
+            # LSL에서 샘플을 하나씩 pull
+            samples_af7 = []
+            samples_af8 = []
+            for _ in range(self.sample_rate):
+                sample, ts = self.inlet.pull_sample(timeout=timeout / float(self.sample_rate))
+                if not sample:
+                    # 타임아웃: 반환하지 않음
+                    return None
+                # AF7, AF8가 첫 두 채널이라고 가정
+                samples_af7.append(float(sample[0]))
+                samples_af8.append(float(sample[1]))
+
+            return EEGChunk(af7=samples_af7, af8=samples_af8, timestamp=time.time(), sequence_id=self.chunk_count)
+        except Exception as e:
+            print(f"{self.name}: read_chunk 실패 - {e}")
+            return None
 
 
 # ============================================================
