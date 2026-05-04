@@ -1,4 +1,4 @@
-# 📋 MUSE2 ↔ Jetson 통신 프로토콜 사양서
+# MUSE2 ↔ Jetson 통신 프로토콜 사양서
 
 ## 목표
 - **MUSE2 팀**: EEG 데이터를 표준 포맷으로 전달
@@ -7,9 +7,9 @@
 
 ---
 
-## 1️⃣ 데이터 포맷: EEGChunk
+## 1. 데이터 포맷: EEGChunk
 
-모든 EEG 데이터는 다음 형식으로 표준화:
+모든 EEG 데이터는 다음 형식으로 표준화된다.
 
 ```python
 class EEGChunk:
@@ -38,7 +38,7 @@ class EEGChunk:
 
 ---
 
-## 2️⃣ 소스 구현 가이드
+## 2. 소스 구현 가이드
 
 ### A. LSL 스트림 (권장: 실시간 EEG 시스템)
 
@@ -143,9 +143,9 @@ eeg_source:
 
 ---
 
-## 3️⃣ 검증 체크리스트 (MUSE2 팀)
+## 3. 검증 체크리스트 (MUSE2 팀)
 
-구현 시 다음을 확인하세요:
+구현 시 다음을 확인해야 한다.
 
 - [ ] **샘플 레이트**: 반드시 256Hz (다르면 변환 필요)
 - [ ] **채널 순서**: AF7이 첫 번째, AF8이 두 번째
@@ -168,12 +168,12 @@ if reader.connect():
     assert len(chunk.af8) == 256
     assert chunk.sample_rate == 256
     assert chunk.timestamp > 0
-    print("✅ MUSE2Reader 검증 통과")
+    print("MUSE2Reader 검증 통과")
 ```
 
 ---
 
-## 4️⃣ 에러 처리 및 복구
+## 4. 에러 처리 및 복구
 
 ### 데이터 손실 감지
 ```python
@@ -183,7 +183,7 @@ chunk = reader.read_chunk()
 
 if chunk.sequence_id != last_seq_id + 1:
     missing = chunk.sequence_id - (last_seq_id + 1)
-    print(f"⚠️ {missing}개 청크 손실됨")
+    print(f"경고: {missing}개 청크 손실됨")
 
 last_seq_id = chunk.sequence_id
 ```
@@ -207,7 +207,7 @@ while True:
 
 ---
 
-## 5️⃣ 성능 요구사항
+## 5. 성능 요구사항
 
 | 항목 | 요구사항 | 비고 |
 |------|---------|------|
@@ -218,7 +218,7 @@ while True:
 
 ---
 
-## 6️⃣ 모니터링 및 디버깅
+## 6. 모니터링 및 디버깅
 
 ### 통계 확인 (Jetson 측)
 ```python
@@ -241,7 +241,7 @@ def log_chunk(chunk):
 
 ---
 
-## 7️⃣ 마이그레이션 경로
+## 7. 마이그레이션 경로
 
 ### 단계 1: 파일 기반 테스트 (현재)
 ```yaml
@@ -270,19 +270,19 @@ eeg_source:
 
 ---
 
-## 📞 문의 및 지원
+## 문의 및 지원
 
-- **MUSE2 팀**: `eeg_data_source.py`의 `MUSE2Reader` 클래스 구현
-- **Jetson 팀**: `realtime_detector.py`에서 소스 선택 및 처리
-- **공동**: `config.yaml`에서 설정 관리
+- **MUSE2 팀**: eeg_data_source.py의 MUSE2Reader 클래스 구현
+- **Jetson 팀**: realtime_detector.py에서 소스 선택 및 처리
+- **공동**: config.yaml에서 설정 관리
 
 ---
 
-## 🎯 핵심 메시지
+## 핵심 메시지
 
-> MUSE2 팀과 Jetson 팀은 **EEGChunk** 포맷으로만 통신합니다.
-> 
-> - MUSE2 팀: LSL/TCP/기타 → **EEGChunk** 변환
-> - Jetson 팀: **EEGChunk** 수신 → 처리 → 점수 계산
-> 
-> **느슨한 결합**으로 양쪽 독립적 개발 가능! ✅
+MUSE2 팀과 Jetson 팀은 **EEGChunk** 포맷으로만 통신한다.
+
+- MUSE2 팀: LSL/TCP/기타 → **EEGChunk** 변환
+- Jetson 팀: **EEGChunk** 수신 → 처리 → 점수 계산
+
+느슨한 결합으로 양쪽 독립적 개발이 가능하다.

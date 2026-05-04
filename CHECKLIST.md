@@ -1,6 +1,6 @@
-# 🎯 팀별 작업 체크리스트
+# 팀별 작업 체크리스트
 
-## 🟡 MUSE2 팀 - EEG 데이터 수집 및 전송
+## MUSE2 팀 - EEG 데이터 수집 및 전송
 
 ### Phase 1: 기본 구현
 - [ ] `eeg_data_source.py`의 `MUSE2Reader` 클래스 구현
@@ -84,7 +84,7 @@ print("✅ MUSE2Reader 구현 완료")
 
 ---
 
-## 🔵 Jetson 팀 - 실시간 감지 및 UI
+## Jetson 팀 - 실시간 감지 및 UI
 
 ### Phase 1: 환경 설정
 ```bash
@@ -209,7 +209,7 @@ eeg_source:
 
 ---
 
-## 🤝 공동 작업 - 통합 테스트
+## 공동 작업 - 통합 테스트
 
 ### Week 1: 개별 검증
 - MUSE2팀: `validate_eeg.py` → EEG 데이터 OK
@@ -243,7 +243,7 @@ python realtime_detector.py  # config.yaml eeg_source=tcp/muse2 설정
 
 ---
 
-## 🎓 참고 자료
+## 참고 자료
 
 | 문서 | 설명 |
 |------|------|
@@ -254,7 +254,7 @@ python realtime_detector.py  # config.yaml eeg_source=tcp/muse2 설정
 
 ---
 
-## 🚨 트러블슈팅
+## 트러블슈팅
 
 ### MUSE2팀
 | 문제 | 해결 |
@@ -273,7 +273,7 @@ python realtime_detector.py  # config.yaml eeg_source=tcp/muse2 설정
 
 ---
 
-## ✅ 최종 체크리스트
+## 최종 체크리스트
 
 ### 배포 전
 - [ ] MUSE2팀: `validate_eeg.py` 모든 항목 PASS
@@ -291,4 +291,4 @@ python realtime_detector.py  # config.yaml eeg_source=tcp/muse2 설정
 
 ---
 
-**모든 파일을 충분히 이해한 후, 각 팀이 독립적으로 작업할 수 있습니다!** 🚀
+모든 파일을 충분히 이해한 후, 각 팀이 독립적으로 작업할 수 있다.

@@ -2,24 +2,24 @@
 
 당신의 프로젝트: **Jetson Orin Nano + OpenCV + MUSE2** 실시간 졸음운전 감지
 
-## 📋 아키텍처
+## 아키텍처
 
 ```
 MUSE2 (EEG 센서)
     ↓ (1초씩 256 샘플)
 Jetson Orin Nano
-    ├─ 🟡 Step 1: muse2_reader.py → AF7/AF8 청크 수신
-    ├─ 🟢 Step 2: FastAPI 서버 (muse_inference_api.py) → 전처리/변환
+    ├─ Step 1: muse2_reader.py → AF7/AF8 청크 수신
+    ├─ Step 2: FastAPI 서버 (muse_inference_api.py) → 전처리/변환
     │  ├─ Bandpass filter (0.5~40Hz)
     │  ├─ Median 제거
     │  ├─ Z-score 정규화
-    │  └─ 모델 추론 → 확률값 + 상태(0/1)
-    ├─ 🔵 Step 3: drowsiness_scorer.py → 점수화 로직
-    │  ├─ 즉각 점수 (현재 확률 × 100)
+    │  문높동 모델 추론 → 확률률값 + 상태(0/1)
+    ├─ Step 3: drowsiness_scorer.py → 점수화 로직
+    │  ├─ 즘각 점수 (현재 확률률 × 100)
     │  ├─ 평활화 점수 (최근 30개 평균)
-    │  ├─ 누적 졸음 시간 (최근 30초)
-    │  └─ 경고 판정 (즉시 또는 누적)
-    └─ 🎨 Step 4: realtime_detector.py → OpenCV UI + 경고
+    │  ├─ 누적 쉁음 시간 (최근 30초)
+    │  문높동 경고 판정 (즘시 또는 누적)
+    문늀─ Step 4: realtime_detector.py → OpenCV UI + 경고
 
     ↓
   화면 표시 + 경고음/진동 발생
@@ -27,9 +27,9 @@ Jetson Orin Nano
 
 ---
 
-## 🔧 설정 및 실행
+## 설정 및 실행
 
-### 1️⃣ FastAPI 서버 시작 (Step 2)
+### 1. FastAPI 서버 시작 (Step 2)
 
 ```bash
 # 모델 경로 설정
@@ -44,7 +44,7 @@ uvicorn muse_inference_api:app --host 0.0.0.0 --port 8000 --workers 1
 
 ✅ 확인: `curl http://localhost:8000/health`
 
-### 2️⃣ 점수화 로직 테스트 (Step 3)
+### 2. 점수화 로직 테스트 (Step 3)
 
 ```bash
 python drowsiness_scorer.py
@@ -52,7 +52,7 @@ python drowsiness_scorer.py
 
 ✅ 7초의 시뮬레이션 데이터로 동작 확인
 
-### 3️⃣ 실시간 감지 시작 (Step 4)
+### 3. 실시간 감지 시작 (Step 4)
 
 ```bash
 # Jetson (디스플레이 있는 경우)
