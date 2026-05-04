@@ -42,7 +42,7 @@ python muse_inference_api.py
 uvicorn muse_inference_api:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
-✅ 확인: `curl http://localhost:8000/health`
+ 확인: `curl http://localhost:8000/health`
 
 ### 2. 점수화 로직 테스트 (Step 3)
 
@@ -50,7 +50,7 @@ uvicorn muse_inference_api:app --host 0.0.0.0 --port 8000 --workers 1
 python drowsiness_scorer.py
 ```
 
-✅ 7초의 시뮬레이션 데이터로 동작 확인
+ 7초의 시뮬레이션 데이터로 동작 확인
 
 ### 3. 실시간 감지 시작 (Step 4)
 
@@ -100,7 +100,7 @@ scorer = DrowsinessScorer(
 
 ---
 
-## 🎯 사용자 커스터마이제이션 포인트
+##  사용자 커스터마이제이션 포인트
 
 ### A. 경고 콜백 (경고음/진동/SMS 등)
 
@@ -156,10 +156,10 @@ def score(self, ...):
 
 ### 1. 멀티 워커 불가 (메모리 문제)
 ```bash
-# ❌ 불가
+# 불가 불가
 uvicorn muse_inference_api:app --workers 4
 
-# ✅ 권장
+#  권장
 uvicorn muse_inference_api:app --workers 1
 ```
 
@@ -184,7 +184,7 @@ preds = model.predict(windows, batch_size=64, verbose=0)  # 128 → 64
 ```bash
 python test_api.py
 ```
-결과: `✅ 전체 통과` (모델 파일 없어도 에러 처리 확인)
+결과: ` 전체 통과` (모델 파일 없어도 에러 처리 확인)
 
 ### 2. 점수화 로직 테스트
 ```bash
@@ -205,7 +205,7 @@ python realtime_detector.py
 
 ## 📝 현재 상황 및 남은 일
 
-### ✅ 완료
+###  완료
 - [x] FastAPI 서버 (전처리/변환)
 - [x] 모델 업로드 (정확도 53%)
 - [x] 점수화 로직
@@ -219,12 +219,12 @@ python realtime_detector.py
 
 ---
 
-## 🚨 주의사항
+##  주의사항
 
 ### 1. 정확도 53%의 의미
-- ✅ 프로토타입 검증용으로 충분
-- ⚠️ 실제 상용화는 더 높은 정확도 필요
-- 💡 개선 방법:
+-  프로토타입 검증용으로 충분
+- 주의: 실제 상용화는 더 높은 정확도 필요
+-  개선 방법:
   - 더 많은 MUSE2 노이즈 데이터 수집
   - 전이학습 (ImageNet → EEG)
   - 다른 채널 추가 (Tp7, Tp8)
@@ -263,7 +263,7 @@ python realtime_detector.py
 > 2. `DrowsinessScorer`로 점수화
 > 3. 위험도별 액션 (경고/기록/서버 전송)
 > 
-> **FastAPI가 이미 해주는 일**: 
+> **FastAPI가 이미 수행하는 일**: 
 > - 데이터 입력 → 전처리 → 모델 변환 → 확률/상태 반환
 > 
 > 이제 당신은 **점수화와 UI만** 신경 쓰면 끝! 🎉
