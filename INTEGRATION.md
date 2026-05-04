@@ -1,4 +1,4 @@
-# 🚗 졸음운전 감지 시스템 - 최종 구성
+# 졸음운전 감지 시스템 - 최종 구성
 
 당신의 프로젝트: **Jetson Orin Nano + OpenCV + MUSE2** 실시간 졸음운전 감지
 
@@ -253,20 +253,6 @@ python realtime_detector.py
 ├── README.md                    # (원본)
 └── INTEGRATION.md               # ← 이 파일
 ```
-
----
-
-## 💬 핵심 메시지
-
-> **당신이 할 일**: 
-> 1. FastAPI 서버에서 받은 `prob_raw` / `prob_scaled` / `state`
-> 2. `DrowsinessScorer`로 점수화
-> 3. 위험도별 액션 (경고/기록/서버 전송)
-> 
-> **FastAPI가 이미 수행하는 일**: 
-> - 데이터 입력 → 전처리 → 모델 변환 → 확률/상태 반환
-> 
-> 이제 당신은 **점수화와 UI만** 신경 쓰면 끝! 🎉
 
 ---
 
