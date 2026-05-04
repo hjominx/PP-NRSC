@@ -24,6 +24,7 @@ import numpy as np
 import requests
 
 from drowsiness_scorer import DrowsinessScorer, DrowsinessScore
+from eeg_data_source import EEGReader, EEGChunk, create_reader
 
 
 @dataclass
@@ -67,13 +68,12 @@ class RealtimeDrowsinessDetector:
             except Exception as e:
                 print(f"⚠️ 세션 종료 실패: {e}")
     
-    def process_eeg_chunk(self, af7_chunk: list[float], af8_chunk: list[float]) -> bool:
+    def process_eeg_chunk(self, eeg_chunk: EEGChunk) -> bool:
         """
-        EEG 청크를 처리하고 점수를 계산합니다.
+        표준화된 EEGChunk를 처리합니다.
         
         Args:
-            af7_chunk: AF7 채널 (256 샘플 = 1초)
-            af8_chunk: AF8 채널 (256 샘플 = 1초)
+            eeg_chunk: EEGChunk 객체
         
         Returns:
             True if 새 윈도우 결과가 있음
@@ -84,8 +84,8 @@ class RealtimeDrowsinessDetector:
         try:
             # API에 전송
             payload = {
-                "af7": af7_chunk,
-                "af8": af8_chunk,
+                "af7": eeg_chunk.af7,
+                "af8": eeg_chunk.af8,
                 "apply_minmax": False,
             }
             resp = requests.post(
@@ -225,46 +225,17 @@ class OpenCVDisplay:
         return img
 
 
-class SimulatedMUSE2Reader:
-    """
-    테스트용: 시뮬레이션된 MUSE2 데이터 생성
-    실제에서는 muse2-lsl 라이브러리 사용
-    """
-    
-    def __init__(self, callback: Callable, interval: float = 1.0):
-        self.callback = callback
-        self.interval = interval
-        self.running = False
-        self.thread = None
-    
-    def start(self):
-        self.running = True
-        self.thread = threading.Thread(target=self._generate_stream, daemon=True)
-        self.thread.start()
-    
-    def stop(self):
-        self.running = False
-        if self.thread:
-            self.thread.join(timeout=2)
-    
-    def _generate_stream(self):
-        """시뮬레이션: 1초씩 EEG 데이터 생성"""
-        FS = 256
-        seed = 0
+    def process_eeg_chunk(self, chunk: EEGChunk) -> bool:
+        """
+        표준화된 EEGChunk를 처리합니다.
         
-        while self.running:
-            seed += 1
-            np.random.seed(seed)
-            t = np.arange(FS) / FS
-            
-            # 인위적 EEG 신호
-            af7 = (15 * np.sin(2*np.pi*10*t) + 5 * np.sin(2*np.pi*20*t) +
-                   np.random.normal(0, 8, FS)).astype(float).tolist()
-            af8 = (12 * np.sin(2*np.pi*10*t + 0.5) + 4 * np.sin(2*np.pi*20*t) +
-                   np.random.normal(0, 8, FS)).astype(float).tolist()
-            
-            self.callback(af7, af8)
-            time.sleep(self.interval)
+        Args:
+            chunk: EEGChunk 객체
+        
+        Returns:
+            True if 새 윈도우 결과가 있음
+        """
+        return self.process_eeg_chunk(chunk.af7, chunk.af8)
 
 
 def main():
@@ -272,46 +243,83 @@ def main():
     
     print("🚀 졸음운전 감지 시스템 시작")
     
-    # ===== 초기화 =====
+    # ===== 설정 로드 =====
+    try:
+        from config import load_config
+        config = load_config("config.yaml")
+    except FileNotFoundError:
+        print("⚠️ config.yaml 없음. 기본 설정 사용")
+        from config import get_default_config
+        config = get_default_config()
+    
+    print(f"📋 설정: EEG 소스={config.eeg_source.type}, "
+          f"API={config.api.url}")
+    
+    # ===== 감지기 초기화 =====
     detector = RealtimeDrowsinessDetector(
-        api_url="http://localhost:8000",
-        alert_callback=lambda s: print(f"  ⚠️ ALERT! {s.risk_level} | score={s.smoothed_score:.1f}"),
+        api_url=config.api.url,
+        alert_callback=lambda s: print(f"  ⚠️ ALERT! {s.risk_level} | score={s.smoothed_score:.1f}")
+        if config.alert.enabled else None,
     )
     
     if not detector.start_session():
         print("❌ 시작 실패")
         return
     
-    # ===== MUSE2 스트림 시작 (시뮬레이션) =====
-    muse_reader = SimulatedMUSE2Reader(
-        callback=detector.process_eeg_chunk,
-        interval=1.0
-    )
-    muse_reader.start()
-    
-    # ===== OpenCV 디스플레이 =====
+    # ===== EEG 리더 생성 및 시작 =====
     try:
-        while True:
+        eeg_reader = create_reader(
+            config.eeg_source.type,
+            **config.eeg_source.kwargs
+        )
+    except Exception as e:
+        print(f"❌ EEG 리더 생성 실패: {e}")
+        return
+    
+    def on_eeg_chunk(chunk: EEGChunk):
+        """EEG 청크 도착 콜백"""
+        detector.process_eeg_chunk(chunk)
+    
+    try:
+        thread = eeg_reader.start_stream(on_eeg_chunk, daemon=False)
+    except Exception as e:
+        print(f"❌ EEG 스트림 시작 실패: {e}")
+        return
+    
+    # ===== OpenCV 디스플레이 루프 =====
+    try:
+        print(f"✅ EEG 스트림 시작됨 ({config.eeg_source.type})")
+        print("   'q' 키로 종료")
+        
+        while eeg_reader.running:
             score = detector.get_latest_score()
             stats = detector.get_stats()
+            stats.update(eeg_reader.get_stats())
             
-            # 대시보드 렌더링
-            img = OpenCVDisplay.create_dashboard(score, stats)
+            # 디스플레이 유형별 처리
+            if config.ui.display_type == "opencv":
+                img = OpenCVDisplay.create_dashboard(score, stats)
+                cv2.imshow("Drowsiness Detection", img)
+                
+                if cv2.waitKey(100) & 0xFF == ord('q'):
+                    break
             
-            # 디스플레이 (Jetson의 경우 DSP 사용, 시뮬레이션은 창)
-            cv2.imshow("Drowsiness Detection", img)
+            elif config.ui.display_type == "headless":
+                # 헤드리스: 콘솔에만 출력
+                if score and detector.frame_count % 10 == 0:
+                    print(f"[t={detector.frame_count}s] "
+                          f"{score.risk_level:4s} | "
+                          f"score={score.smoothed_score:.1f}")
+                time.sleep(0.1)
             
-            # 'q' 키로 종료
-            if cv2.waitKey(100) & 0xFF == ord('q'):
-                break
-            
-            time.sleep(0.1)
+            else:
+                time.sleep(0.1)
     
     except KeyboardInterrupt:
         print("\n⏹️ 종료 중...")
     
     finally:
-        muse_reader.stop()
+        eeg_reader.stop_stream()
         detector.end_session()
         cv2.destroyAllWindows()
         print("✅ 종료 완료")
