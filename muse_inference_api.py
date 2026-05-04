@@ -1,0 +1,517 @@
+"""
+MUSE 2 Sleep/Awake Inference API
+================================
+EEG (AF7, AF8) -> 전처리 -> 추론 -> 확률/상태 반환까지만 책임짐.
+점수화 로직은 호출하는 쪽에서 붙이면 됨.
+
+엔드포인트
+----------
+- GET  /health                    : 헬스체크 + 모델 로드 상태
+- POST /predict/batch             : JSON으로 전체 신호 보내고 모든 윈도우 예측 받기
+- POST /predict/csv               : CSV 파일 업로드 (AF7, AF8 컬럼 필수)
+- POST /session/start             : 스트리밍 세션 생성 -> session_id 반환
+- POST /session/{sid}/append      : 1초(또는 임의 길이) 청크 누적 + 가능하면 즉시 추론
+- POST /session/{sid}/end         : 세션 종료 + 누적된 모든 결과 반환
+- WS   /ws/stream                 : WebSocket 실시간 스트리밍 (1초 단위 추론)
+"""
+
+from __future__ import annotations
+
+import io
+import os
+import time
+import uuid
+from threading import Lock
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from scipy.signal import butter, filtfilt
+
+# ============================================================
+# 1. 설정 (학습 코드와 동일)
+# ============================================================
+FS = 256                       # 샘플레이트
+SEQ_LEN = FS * 5               # 5초 = 1280 샘플
+STRIDE = FS                    # 1초 stride
+
+# 환경변수로 모델 경로 덮어쓸 수 있게
+MODEL_PATH = os.environ.get(
+    "MUSE_MODEL_PATH",
+    "/mnt/user-data/uploads/MUSE_activity_model.keras",
+)
+
+# Hysteresis 임계값 (학습 코드 기본값)
+HYS_HIGH_DEFAULT = 0.55
+HYS_LOW_DEFAULT = 0.45
+
+# 스트리밍 시 전처리에 사용할 버퍼 길이 (filtfilt 경계 효과 줄이려고 5초보다 넉넉히 잡음)
+BUFFER_SEC = 10
+BUFFER_LEN = FS * BUFFER_SEC
+
+# 세션 만료 (초)
+SESSION_TTL = 60 * 30
+
+
+# ============================================================
+# 2. 핵심 함수 (학습 코드와 동일한 전처리/후처리)
+# ============================================================
+# Butter 필터 계수는 한 번만 계산해서 재사용
+_NYQ = 0.5 * FS
+_BUTTER_B, _BUTTER_A = butter(4, [0.5 / _NYQ, 40 / _NYQ], btype="band")
+
+
+def preprocess(x: np.ndarray) -> np.ndarray:
+    """학습 코드의 preprocess 그대로. shape (N, 2) -> (N, 2) float32."""
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim != 2 or x.shape[1] != 2:
+        raise ValueError(f"입력은 (N, 2) shape이어야 합니다. 받은 shape: {x.shape}")
+
+    # filtfilt는 신호 길이가 너무 짧으면 에러. 안전 가드.
+    if x.shape[0] < 33:
+        raise ValueError(f"신호가 너무 짧습니다 (N={x.shape[0]}). 최소 33 샘플 필요.")
+
+    x = filtfilt(_BUTTER_B, _BUTTER_A, x, axis=0)
+    x = x - np.median(x, axis=0)
+    x = np.clip(x, -100, 100)
+    return ((x - x.mean(axis=0)) / (x.std(axis=0) + 1e-6)).astype(np.float32)
+
+
+def hysteresis(pred: np.ndarray, high: float = HYS_HIGH_DEFAULT, low: float = HYS_LOW_DEFAULT) -> np.ndarray:
+    """학습 코드와 동일. high 이상이면 1, low 이하면 0, 사이 구간은 직전 상태 유지."""
+    state = 0
+    out = []
+    for p in pred:
+        if p > high:
+            state = 1
+        elif p < low:
+            state = 0
+        out.append(state)
+    return np.array(out, dtype=np.int32)
+
+
+def make_windows(x: np.ndarray, seq_len: int = SEQ_LEN, stride: int = STRIDE) -> np.ndarray:
+    """전처리된 (N, 2) -> (W, 1280, 2) 윈도우 배열."""
+    n = len(x)
+    if n < seq_len:
+        return np.empty((0, seq_len, 2), dtype=np.float32)
+    starts = list(range(0, n - seq_len + 1, stride))
+    return np.stack([x[s : s + seq_len] for s in starts], axis=0).astype(np.float32)
+
+
+def minmax_scale(p: np.ndarray) -> np.ndarray:
+    """학습 코드의 preds_scaled. 분포가 좁을 때 결과를 0~1로 펼침."""
+    if len(p) == 0:
+        return p
+    return (p - p.min()) / (p.max() - p.min() + 1e-6)
+
+
+# ============================================================
+# 3. 모델 로딩 (싱글턴, 스레드 안전)
+# ============================================================
+_model: Optional[tf.keras.Model] = None
+_model_lock = Lock()
+
+
+def get_model() -> tf.keras.Model:
+    global _model
+    if _model is None:
+        with _model_lock:
+            if _model is None:
+                if not os.path.exists(MODEL_PATH):
+                    raise RuntimeError(f"모델 파일을 찾을 수 없음: {MODEL_PATH}")
+                _model = tf.keras.models.load_model(MODEL_PATH, compile=False, safe_mode=False)
+                # warmup
+                dummy = np.zeros((1, SEQ_LEN, 2), dtype=np.float32)
+                _model.predict(dummy, verbose=0)
+    return _model
+
+
+# 추론 자체는 thread-safe하지 않은 케이스가 있어서 lock으로 감쌈
+_predict_lock = Lock()
+
+
+def predict_windows(windows: np.ndarray, batch_size: int = 128) -> np.ndarray:
+    if len(windows) == 0:
+        return np.empty((0,), dtype=np.float32)
+    model = get_model()
+    with _predict_lock:
+        preds = model.predict(windows, batch_size=batch_size, verbose=0).flatten()
+    return preds.astype(np.float32)
+
+
+# ============================================================
+# 4. Pydantic 스키마
+# ============================================================
+class BatchPredictRequest(BaseModel):
+    af7: list[float] = Field(..., description="AF7 채널 raw 신호 (256Hz 기준)")
+    af8: list[float] = Field(..., description="AF8 채널 raw 신호 (256Hz 기준)")
+    apply_minmax: bool = Field(True, description="원본 학습 코드처럼 확률을 min-max로 펼치기")
+    hys_high: float = Field(HYS_HIGH_DEFAULT, ge=0.0, le=1.0)
+    hys_low: float = Field(HYS_LOW_DEFAULT, ge=0.0, le=1.0)
+
+
+class WindowResult(BaseModel):
+    t_start_sec: float
+    t_end_sec: float
+    prob_raw: float
+    prob_scaled: Optional[float] = None
+    state: int  # 0: sleep, 1: awake (히스테리시스 적용 후)
+
+
+class BatchPredictResponse(BaseModel):
+    n_samples: int
+    n_windows: int
+    fs: int = FS
+    seq_len: int = SEQ_LEN
+    stride: int = STRIDE
+    prob_raw_min: float
+    prob_raw_max: float
+    results: list[WindowResult]
+
+
+class StartSessionResponse(BaseModel):
+    session_id: str
+    fs: int = FS
+    seq_len: int = SEQ_LEN
+    stride: int = STRIDE
+    note: str = "AF7, AF8 청크를 /session/{sid}/append로 보내세요."
+
+
+class AppendRequest(BaseModel):
+    af7: list[float]
+    af8: list[float]
+    apply_minmax: bool = False  # 스트리밍에서는 현재 윈도우 단독이라 보통 False
+    hys_high: float = HYS_HIGH_DEFAULT
+    hys_low: float = HYS_LOW_DEFAULT
+
+
+class AppendResponse(BaseModel):
+    session_id: str
+    buffered_samples: int
+    new_results: list[WindowResult]
+
+
+# ============================================================
+# 5. 스트리밍 세션 (in-memory, 단일 프로세스 가정)
+# ============================================================
+class StreamSession:
+    """1초 단위 추론을 위한 롤링 버퍼."""
+
+    def __init__(self, sid: str):
+        self.sid = sid
+        self.buffer = np.empty((0, 2), dtype=np.float32)  # raw
+        self.total_samples = 0                            # 누적 샘플 수 (절대 인덱스용)
+        self.next_window_start = 0                        # 다음에 추론할 윈도우의 절대 시작 인덱스
+        self.hyst_state = 0                               # hysteresis 상태 유지
+        self.created_at = time.time()
+        self.last_active = time.time()
+        self.lock = Lock()
+
+    def append(self, raw_chunk: np.ndarray, hys_high: float, hys_low: float, apply_minmax: bool) -> list[WindowResult]:
+        """
+        raw_chunk: (M, 2) — 새로 들어온 raw EEG.
+        반환: 이번 호출로 새로 가능해진 윈도우들의 결과.
+        """
+        if raw_chunk.ndim != 2 or raw_chunk.shape[1] != 2:
+            raise ValueError(f"chunk shape이 (M, 2) 여야 함. 받은 shape: {raw_chunk.shape}")
+
+        with self.lock:
+            self.last_active = time.time()
+            self.buffer = np.concatenate([self.buffer, raw_chunk.astype(np.float32)], axis=0)
+            self.total_samples += len(raw_chunk)
+
+            # 버퍼는 최근 BUFFER_LEN 샘플만 유지
+            if len(self.buffer) > BUFFER_LEN:
+                self.buffer = self.buffer[-BUFFER_LEN:]
+
+            # buffer의 절대 시작 인덱스 = total_samples - len(buffer)
+            buf_abs_start = self.total_samples - len(self.buffer)
+
+            # 추론 가능한 윈도우 (절대 인덱스 기준): next_window_start, +stride, ... <= total_samples - SEQ_LEN
+            results: list[WindowResult] = []
+            new_window_starts: list[int] = []
+            ws = self.next_window_start
+            while ws + SEQ_LEN <= self.total_samples:
+                # 이 윈도우가 현재 버퍼 안에 들어와 있어야 함
+                if ws < buf_abs_start:
+                    # 버퍼 밖으로 밀려난 경우(거의 없음 - chunk가 BUFFER_SEC보다 클 때) skip
+                    ws += STRIDE
+                    continue
+                new_window_starts.append(ws)
+                ws += STRIDE
+            self.next_window_start = ws
+
+            if not new_window_starts:
+                return results
+
+            # 버퍼 전체를 한 번 전처리 (filtfilt 경계 효과 최소화)
+            # 단, 버퍼가 너무 짧으면 (5초 미만) 추론 불가 — 위 while에서 이미 걸러짐
+            try:
+                buf_pre = preprocess(self.buffer)
+            except ValueError:
+                return results
+
+            # 각 윈도우를 슬라이스 (버퍼 내부의 상대 인덱스로 변환)
+            windows = []
+            for ws_abs in new_window_starts:
+                rel_start = ws_abs - buf_abs_start
+                windows.append(buf_pre[rel_start : rel_start + SEQ_LEN])
+            windows_arr = np.stack(windows, axis=0)
+
+            preds = predict_windows(windows_arr)
+
+            if apply_minmax and len(preds) > 1:
+                preds_scaled = minmax_scale(preds)
+            else:
+                preds_scaled = None
+
+            # hysteresis는 세션 상태를 이어가야 하므로 직접 적용
+            for i, ws_abs in enumerate(new_window_starts):
+                p_raw = float(preds[i])
+                p_for_hys = float(preds_scaled[i]) if preds_scaled is not None else p_raw
+                if p_for_hys > hys_high:
+                    self.hyst_state = 1
+                elif p_for_hys < hys_low:
+                    self.hyst_state = 0
+                results.append(
+                    WindowResult(
+                        t_start_sec=ws_abs / FS,
+                        t_end_sec=(ws_abs + SEQ_LEN) / FS,
+                        prob_raw=p_raw,
+                        prob_scaled=(float(preds_scaled[i]) if preds_scaled is not None else None),
+                        state=int(self.hyst_state),
+                    )
+                )
+            return results
+
+
+_sessions: dict[str, StreamSession] = {}
+_sessions_lock = Lock()
+
+
+def _gc_sessions():
+    now = time.time()
+    with _sessions_lock:
+        dead = [sid for sid, s in _sessions.items() if now - s.last_active > SESSION_TTL]
+        for sid in dead:
+            del _sessions[sid]
+
+
+# ============================================================
+# 6. FastAPI 앱
+# ============================================================
+app = FastAPI(
+    title="MUSE Sleep/Awake Inference API",
+    description="EEG (AF7, AF8) → 전처리 → 추론까지. 점수화 로직은 호출자가 붙임.",
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+def _startup():
+    # 모델 미리 로드 (실패하면 바로 알게)
+    get_model()
+
+
+@app.get("/health")
+def health():
+    try:
+        m = get_model()
+        return {
+            "status": "ok",
+            "model_path": MODEL_PATH,
+            "input_shape": list(m.input_shape),
+            "output_shape": list(m.output_shape),
+            "fs": FS,
+            "seq_len": SEQ_LEN,
+            "stride": STRIDE,
+        }
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+# ----- Batch (JSON) -----
+@app.post("/predict/batch", response_model=BatchPredictResponse)
+def predict_batch(req: BatchPredictRequest):
+    if len(req.af7) != len(req.af8):
+        raise HTTPException(400, f"AF7/AF8 길이가 다름: {len(req.af7)} vs {len(req.af8)}")
+    if req.hys_low > req.hys_high:
+        raise HTTPException(400, "hys_low는 hys_high 이하여야 합니다.")
+
+    raw = np.stack([req.af7, req.af8], axis=1).astype(np.float32)
+    return _run_batch(raw, req.apply_minmax, req.hys_high, req.hys_low)
+
+
+# ----- Batch (CSV 업로드) -----
+@app.post("/predict/csv", response_model=BatchPredictResponse)
+async def predict_csv(
+    file: UploadFile = File(...),
+    apply_minmax: bool = True,
+    hys_high: float = HYS_HIGH_DEFAULT,
+    hys_low: float = HYS_LOW_DEFAULT,
+):
+    if hys_low > hys_high:
+        raise HTTPException(400, "hys_low는 hys_high 이하여야 합니다.")
+    content = await file.read()
+    try:
+        df = pd.read_csv(io.BytesIO(content))
+    except Exception as e:
+        raise HTTPException(400, f"CSV 파싱 실패: {e}")
+
+    if "AF7" not in df.columns or "AF8" not in df.columns:
+        raise HTTPException(400, f"CSV에 AF7, AF8 컬럼이 필요합니다. 받은 컬럼: {list(df.columns)}")
+
+    raw = df[["AF7", "AF8"]].values.astype(np.float32)
+    return _run_batch(raw, apply_minmax, hys_high, hys_low)
+
+
+def _run_batch(raw: np.ndarray, apply_minmax: bool, hys_high: float, hys_low: float) -> BatchPredictResponse:
+    if len(raw) < SEQ_LEN:
+        raise HTTPException(400, f"신호가 너무 짧음. 최소 {SEQ_LEN} 샘플 ({SEQ_LEN/FS}초) 필요. 받은 샘플 수: {len(raw)}")
+
+    pre = preprocess(raw)
+    windows = make_windows(pre)
+    preds = predict_windows(windows)
+
+    if apply_minmax:
+        preds_scaled = minmax_scale(preds)
+        states = hysteresis(preds_scaled, hys_high, hys_low)
+    else:
+        preds_scaled = None
+        states = hysteresis(preds, hys_high, hys_low)
+
+    results: list[WindowResult] = []
+    for i in range(len(preds)):
+        ws_abs = i * STRIDE
+        results.append(
+            WindowResult(
+                t_start_sec=ws_abs / FS,
+                t_end_sec=(ws_abs + SEQ_LEN) / FS,
+                prob_raw=float(preds[i]),
+                prob_scaled=(float(preds_scaled[i]) if preds_scaled is not None else None),
+                state=int(states[i]),
+            )
+        )
+
+    return BatchPredictResponse(
+        n_samples=int(len(raw)),
+        n_windows=int(len(preds)),
+        prob_raw_min=float(preds.min()) if len(preds) else 0.0,
+        prob_raw_max=float(preds.max()) if len(preds) else 0.0,
+        results=results,
+    )
+
+
+# ----- Streaming (HTTP 세션) -----
+@app.post("/session/start", response_model=StartSessionResponse)
+def session_start():
+    _gc_sessions()
+    sid = uuid.uuid4().hex
+    with _sessions_lock:
+        _sessions[sid] = StreamSession(sid)
+    return StartSessionResponse(session_id=sid)
+
+
+@app.post("/session/{sid}/append", response_model=AppendResponse)
+def session_append(sid: str, req: AppendRequest):
+    if len(req.af7) != len(req.af8):
+        raise HTTPException(400, f"AF7/AF8 길이가 다름: {len(req.af7)} vs {len(req.af8)}")
+    if req.hys_low > req.hys_high:
+        raise HTTPException(400, "hys_low는 hys_high 이하여야 합니다.")
+
+    with _sessions_lock:
+        sess = _sessions.get(sid)
+    if sess is None:
+        raise HTTPException(404, f"session_id 없음: {sid}")
+
+    chunk = np.stack([req.af7, req.af8], axis=1).astype(np.float32)
+    try:
+        new_results = sess.append(chunk, req.hys_high, req.hys_low, req.apply_minmax)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    return AppendResponse(
+        session_id=sid,
+        buffered_samples=sess.total_samples,
+        new_results=new_results,
+    )
+
+
+@app.post("/session/{sid}/end")
+def session_end(sid: str):
+    with _sessions_lock:
+        sess = _sessions.pop(sid, None)
+    if sess is None:
+        raise HTTPException(404, f"session_id 없음: {sid}")
+    return {"session_id": sid, "total_samples": sess.total_samples, "ended": True}
+
+
+# ----- Streaming (WebSocket) -----
+@app.websocket("/ws/stream")
+async def ws_stream(websocket: WebSocket):
+    """
+    프로토콜 (JSON 메시지):
+      클라이언트 -> 서버:
+        {"af7": [...], "af8": [...], "apply_minmax": false, "hys_high": 0.55, "hys_low": 0.45}
+      서버 -> 클라이언트:
+        {"type": "result", "buffered_samples": int, "new_results": [WindowResult, ...]}
+        {"type": "error",  "detail": "..."}
+    """
+    await websocket.accept()
+    sess = StreamSession(uuid.uuid4().hex)
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            af7 = msg.get("af7")
+            af8 = msg.get("af8")
+            if af7 is None or af8 is None or len(af7) != len(af8):
+                await websocket.send_json({"type": "error", "detail": "af7/af8 누락 또는 길이 불일치"})
+                continue
+            try:
+                chunk = np.stack([af7, af8], axis=1).astype(np.float32)
+                new_results = sess.append(
+                    chunk,
+                    float(msg.get("hys_high", HYS_HIGH_DEFAULT)),
+                    float(msg.get("hys_low", HYS_LOW_DEFAULT)),
+                    bool(msg.get("apply_minmax", False)),
+                )
+            except ValueError as e:
+                await websocket.send_json({"type": "error", "detail": str(e)})
+                continue
+
+            await websocket.send_json(
+                {
+                    "type": "result",
+                    "buffered_samples": sess.total_samples,
+                    "new_results": [r.model_dump() for r in new_results],
+                }
+            )
+    except WebSocketDisconnect:
+        return
+
+
+# ============================================================
+# 7. 직접 실행
+# ============================================================
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "muse_inference_api:app",
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "8000")),
+        reload=False,
+    )
