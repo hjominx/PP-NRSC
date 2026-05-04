@@ -1,4 +1,43 @@
-# MUSE Sleep/Awake Inference API
+# 🚗 실시간 졸음운전 감지 시스템
+
+**Jetson Orin Nano + OpenCV + MUSE2**를 사용한 차량 안전장치
+
+```
+MUSE2 EEG → FastAPI (전처리/모델) → 점수화 로직 → OpenCV UI + 경고
+```
+
+## 📁 프로젝트 구조
+
+| 파일 | 목적 |
+|------|------|
+| **muse_inference_api.py** | FastAPI 서버: EEG 데이터 전처리 & 모델 추론 |
+| **drowsiness_scorer.py** | 점수화 로직: API 응답 → 위험도 계산 |
+| **realtime_detector.py** | 실시간 감지: Jetson + OpenCV 통합 UI |
+| **test_api.py** | API 테스트 (모든 엔드포인트 검증) |
+| **INTEGRATION.md** | 📖 전체 통합 가이드 **← 먼저 읽으세요** |
+
+## 🚀 빠른 시작
+
+### 1. FastAPI 서버 시작
+```bash
+export MUSE_MODEL_PATH=/path/to/MUSE_activity_model.keras
+python muse_inference_api.py
+```
+
+### 2. 실시간 감지 실행
+```bash
+python realtime_detector.py
+```
+
+### 3. 테스트
+```bash
+python test_api.py
+python drowsiness_scorer.py
+```
+
+---
+
+## 🔧 FastAPI 서버
 
 EEG raw 데이터(AF7, AF8) → 전처리 → 모델 추론 → 확률/상태 반환까지만 책임지는 FastAPI 서버.
 점수화 로직은 호출하는 쪽에서 응답을 받아서 붙이면 됨.
