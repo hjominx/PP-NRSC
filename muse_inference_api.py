@@ -23,7 +23,7 @@ import time
 import uuid
 import asyncio
 from threading import Lock
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -36,6 +36,8 @@ from scipy.signal import butter, filtfilt
 
 from eeg_data_source import create_reader
 from drowsiness_scorer import DrowsinessScorer
+from advanced_preprocessing import AdvancedPreprocessor
+from advanced_postprocessing import AdvancedPostprocessor
 
 # ============================================================
 # 1. 설정 (학습 코드와 동일)
@@ -69,14 +71,16 @@ SESSION_TTL = 60 * 30
 _NYQ = 0.5 * FS
 _BUTTER_B, _BUTTER_A = butter(4, [0.5 / _NYQ, 40 / _NYQ], btype="band")
 
+# 고급 전처리기 초기화
+_advanced_preprocessor = AdvancedPreprocessor(verbose=False)
 
-def preprocess(x: np.ndarray) -> np.ndarray:
-    """학습 코드의 preprocess 그대로. shape (N, 2) -> (N, 2) float32."""
+
+def preprocess_basic(x: np.ndarray) -> np.ndarray:
+    """기본 전처리 (호환성용)"""
     x = np.asarray(x, dtype=np.float32)
     if x.ndim != 2 or x.shape[1] != 2:
         raise ValueError(f"입력은 (N, 2) shape이어야 합니다. 받은 shape: {x.shape}")
 
-    # filtfilt는 신호 길이가 너무 짧으면 에러. 안전 가드.
     if x.shape[0] < 33:
         raise ValueError(f"신호가 너무 짧습니다 (N={x.shape[0]}). 최소 33 샘플 필요.")
 
@@ -86,8 +90,45 @@ def preprocess(x: np.ndarray) -> np.ndarray:
     return ((x - x.mean(axis=0)) / (x.std(axis=0) + 1e-6)).astype(np.float32)
 
 
+def preprocess(x: np.ndarray, use_advanced: bool = True) -> Tuple[np.ndarray, float]:
+    """
+    향상된 전처리 (Muse2 노이즈 대응)
+    
+    Args:
+        x: (N, 2) 입력 신호 (AF7, AF8)
+        use_advanced: True면 고급 전처리, False면 기본 전처리 사용
+    
+    Returns:
+        (처리된_신호, 품질_점수)
+    """
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim != 2 or x.shape[1] != 2:
+        raise ValueError(f"입력은 (N, 2) shape이어야 합니다. 받은 shape: {x.shape}")
+
+    if x.shape[0] < 33:
+        raise ValueError(f"신호가 너무 짧습니다 (N={x.shape[0]}). 최소 33 샘플 필요.")
+
+    if not use_advanced:
+        # 기본 전처리 (호환성)
+        return preprocess_basic(x), 1.0
+    
+    # 고급 전처리: 각 채널 개별 처리
+    af7_proc = _advanced_preprocessor.process(x[:, 0], remove_artifacts=True, aggressive=False)
+    af8_proc = _advanced_preprocessor.process(x[:, 1], remove_artifacts=True, aggressive=False)
+    
+    quality = _advanced_preprocessor.get_quality_score()
+    
+    # 결과를 (N, 2)로 스택
+    return np.stack([af7_proc, af8_proc], axis=1).astype(np.float32), quality
+
+
 def hysteresis(pred: np.ndarray, high: float = HYS_HIGH_DEFAULT, low: float = HYS_LOW_DEFAULT) -> np.ndarray:
-    """학습 코드와 동일. high 이상이면 1, low 이하면 0, 사이 구간은 직전 상태 유지."""
+    """
+    히스테리시스 필터 적용
+    high 이상이면 1, low 이하면 0, 사이 구간은 직전 상태 유지.
+    
+    참고: advanced_postprocessing에서 더 견고한 버전 제공
+    """
     state = 0
     out = []
     for p in pred:
@@ -97,6 +138,31 @@ def hysteresis(pred: np.ndarray, high: float = HYS_HIGH_DEFAULT, low: float = HY
             state = 0
         out.append(state)
     return np.array(out, dtype=np.int32)
+
+
+def hysteresis_with_quality(pred: np.ndarray, 
+                           quality_scores: np.ndarray = None,
+                           high: float = HYS_HIGH_DEFAULT, 
+                           low: float = HYS_LOW_DEFAULT) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    품질 점수를 고려한 개선된 히스테리시스
+    
+    Returns:
+        (states, confidences)
+    """
+    if quality_scores is None:
+        quality_scores = np.ones_like(pred)
+    
+    postprocessor = AdvancedPostprocessor(history_size=5, confidence_threshold=0.5)
+    states = []
+    confidences = []
+    
+    for p, q in zip(pred, quality_scores):
+        state, confidence, _ = postprocessor.process(p, q, high, low)
+        states.append(state)
+        confidences.append(confidence)
+    
+    return np.array(states, dtype=np.int32), np.array(confidences, dtype=np.float32)
 
 
 def make_windows(x: np.ndarray, seq_len: int = SEQ_LEN, stride: int = STRIDE) -> np.ndarray:
@@ -257,7 +323,7 @@ class StreamSession:
             # 버퍼 전체를 한 번 전처리 (filtfilt 경계 효과 최소화)
             # 단, 버퍼가 너무 짧으면 (5초 미만) 추론 불가 — 위 while에서 이미 걸러짐
             try:
-                buf_pre = preprocess(self.buffer)
+                buf_pre, quality_score = preprocess(self.buffer, use_advanced=True)
             except ValueError:
                 return results
 
@@ -574,7 +640,7 @@ def _run_batch(raw: np.ndarray, apply_minmax: bool, hys_high: float, hys_low: fl
     if len(raw) < SEQ_LEN:
         raise HTTPException(400, f"신호가 너무 짧음. 최소 {SEQ_LEN} 샘플 ({SEQ_LEN/FS}초) 필요. 받은 샘플 수: {len(raw)}")
 
-    pre = preprocess(raw)
+    pre, quality_score = preprocess(raw, use_advanced=True)
     windows = make_windows(pre)
     preds = predict_windows(windows)
 

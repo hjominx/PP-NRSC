@@ -14,34 +14,54 @@ import numpy as np
 
 from eeg_data_source import create_reader, EEGChunk
 from drowsiness_scorer import DrowsinessScorer
+from advanced_preprocessing import AdvancedPreprocessor
 
 
-def estimate_prob_from_chunk(chunk: EEGChunk) -> float:
-    """단순한 대체 모델: 알파(8-13Hz) 파워 비율을 사용해 0~1로 매핑
+def estimate_prob_from_chunk(chunk: EEGChunk, preprocessor: AdvancedPreprocessor) -> float:
+    """
+    향상된 특징 기반 확률 추정
     (실제 모델을 대체하는 용도이며, 테스트/디버깅 전용)
     """
     af7 = np.asarray(chunk.af7)
     af8 = np.asarray(chunk.af8)
-    x = (af7 + af8) * 0.5
-    # FFT
+    
+    # 고급 전처리 (아티팩트 제거)
+    af7_proc = preprocessor.process(af7, remove_artifacts=True)
+    af8_proc = preprocessor.process(af8, remove_artifacts=True)
+    
+    # 신호 품질 점수 기반 신뢰도
+    quality = preprocessor.get_quality_score()
+    
+    # 평균 신호 사용
+    x = (af7_proc + af8_proc) * 0.5
+    
+    # FFT 기반 주파수 분석
     N = len(x)
     freqs = np.fft.rfftfreq(N, d=1/256)
     P = np.abs(np.fft.rfft(x))**2
-
+    
     # 밴드 파워 계산
     def band_power(p, f, lo, hi):
         mask = (f >= lo) & (f <= hi)
         return p[mask].sum()
-
-    alpha = band_power(P, freqs, 8, 13)
+    
+    alpha = band_power(P, freqs, 8, 13)      # 알파: 졸음 지표
+    beta = band_power(P, freqs, 13, 30)      # 베타: 각성 지표
+    theta = band_power(P, freqs, 4, 8)       # 세타: 졸음 지표
     total = P.sum() + 1e-9
-    ratio = alpha / total
-
-    # ratio는 보통 작음 -> 부드러운 시그모이드로 스케일링 (더 관대하게)
-    # 경험적으로 시뮬레이션/실데이터 모두에서 과민하지 않게 동작하도록 조정
-    x = (ratio - 0.03) / 0.06
-    prob = 1.0 / (1.0 + np.exp(-6.0 * x))
-    return float(np.clip(prob, 0.0, 1.0))
+    
+    # 특징: 알파/베타 비율 (높을수록 졸음)
+    alpha_beta_ratio = alpha / (beta + 1e-9)
+    theta_alpha_ratio = theta / (alpha + 1e-9)
+    
+    # 간단한 점수화
+    # 알파 비율이 높거나 시그마 활동이 많으면 졸음
+    score = (alpha_beta_ratio * 0.6 + theta_alpha_ratio * 0.2) / (1.0 + alpha_beta_ratio + theta_alpha_ratio)
+    
+    # 신호 품질로 신뢰도 조정
+    prob = float(np.clip(score * quality, 0.0, 1.0))
+    
+    return prob
 
 
 def main(duration: int = 30, source: str = "muse2"):
@@ -50,6 +70,9 @@ def main(duration: int = 30, source: str = "muse2"):
     if not reader.connect():
         print("리더 연결 실패")
         return
+
+    # 전처리기 초기화
+    preprocessor = AdvancedPreprocessor(verbose=False)
 
     # 보수적 임계값: 시뮬레이션 및 실환경에서 과민하게 경고가 뜨는 것을 방지
     scorer = DrowsinessScorer(
@@ -71,7 +94,8 @@ def main(duration: int = 30, source: str = "muse2"):
                 print("타임아웃: 청크 수신 없음")
                 continue
 
-            prob = estimate_prob_from_chunk(chunk)
+            prob = estimate_prob_from_chunk(chunk, preprocessor)
+            
             # 간단한 평활화: 최근 N 프레임 평균을 사용
             prob_history.append(prob)
             smoothed_prob = float(sum(prob_history) / len(prob_history))
@@ -84,7 +108,8 @@ def main(duration: int = 30, source: str = "muse2"):
 
             ts = time.strftime('%H:%M:%S')
             alert = "ALERT" if score.should_alert else ""
-            print(f"[{ts}] seq={chunk.sequence_id} prob={prob:.3f} smoothed={score.smoothed_score:.1f} {score.risk_level} {alert}")
+            quality = f"Q:{preprocessor.get_quality_score():.2f}"
+            print(f"[{ts}] seq={chunk.sequence_id} prob={prob:.3f} smoothed={score.smoothed_score:.1f} {score.risk_level} {quality} {alert}")
 
             last_seq = chunk.sequence_id
     except KeyboardInterrupt:
