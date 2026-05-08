@@ -21,6 +21,7 @@ import io
 import os
 import time
 import uuid
+import asyncio
 from threading import Lock
 from typing import Optional
 
@@ -29,8 +30,12 @@ import pandas as pd
 import tensorflow as tf
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from scipy.signal import butter, filtfilt
+
+from eeg_data_source import create_reader
+from drowsiness_scorer import DrowsinessScorer
 
 # ============================================================
 # 1. 설정 (학습 코드와 동일)
@@ -320,6 +325,193 @@ app.add_middleware(
 )
 
 
+@app.get("/monitor", response_class=HTMLResponse)
+def monitor_page():
+        """브라우저 실시간 모니터링 페이지."""
+        return """
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Muse Realtime Monitor</title>
+    <style>
+        :root {
+            --bg: #0b1220;
+            --card: #121a2b;
+            --fg: #e9eefb;
+            --muted: #8ea0c7;
+            --ok: #16a34a;
+            --warn: #f59e0b;
+            --risk: #ef4444;
+            --line: #22314f;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif;
+            background: radial-gradient(circle at 20% 10%, #1b2b4a 0, var(--bg) 40%);
+            color: var(--fg);
+            min-height: 100vh;
+            padding: 24px;
+        }
+        .wrap { max-width: 1100px; margin: 0 auto; }
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .card {
+            background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent), var(--card);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 16px;
+        }
+        .big { font-size: 44px; font-weight: 800; letter-spacing: 0.5px; }
+        .muted { color: var(--muted); }
+        .pill { display: inline-block; border-radius: 999px; padding: 8px 12px; font-weight: 700; }
+        .ok { background: rgba(22,163,74,.2); color: #7ff5a3; }
+        .warn { background: rgba(245,158,11,.2); color: #ffd17c; }
+        .risk { background: rgba(239,68,68,.2); color: #ff9a9a; }
+        .alert {
+            margin-top: 12px;
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid transparent;
+            transition: all .2s;
+        }
+        .alert.on {
+            background: rgba(239,68,68,.18);
+            border-color: rgba(239,68,68,.55);
+            box-shadow: 0 0 0 2px rgba(239,68,68,.2) inset;
+        }
+        #log {
+            height: 260px;
+            overflow: auto;
+            white-space: pre-wrap;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            background: #0d1424;
+            border-radius: 10px;
+            padding: 10px;
+            border: 1px solid var(--line);
+        }
+        button {
+            border: 0;
+            border-radius: 10px;
+            padding: 10px 14px;
+            cursor: pointer;
+            font-weight: 700;
+            background: #1f6feb;
+            color: #fff;
+        }
+        button.stop { background: #8b2a2a; }
+        @media (max-width: 900px) {
+            .row { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1>Muse 실시간 모니터링</h1>
+        <p class="muted">헤드셋 데이터 -> 추론 -> 점수화 -> 경고를 브라우저에서 확인합니다.</p>
+
+        <div class="card" style="margin-bottom:16px; display:flex; gap:8px; align-items:center;">
+            <button id="startBtn">시작</button>
+            <button id="stopBtn" class="stop">중지</button>
+            <span id="conn" class="muted">연결 대기</span>
+        </div>
+
+        <div class="row">
+            <div class="card">
+                <div class="muted">현재 상태</div>
+                <div id="riskLevel" class="pill ok" style="margin-top:8px;">안전</div>
+                <div style="height:8px"></div>
+                <div class="muted">점수</div>
+                <div id="score" class="big">0.0</div>
+                <div class="muted">prob_raw(awake)</div>
+                <div id="probRaw" class="big" style="font-size:28px">0.000</div>
+                <div id="alert" class="alert">경고 없음</div>
+            </div>
+
+            <div class="card">
+                <div class="muted">실시간 로그</div>
+                <div id="log"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        const conn = document.getElementById('conn');
+        const scoreEl = document.getElementById('score');
+        const probRawEl = document.getElementById('probRaw');
+        const riskEl = document.getElementById('riskLevel');
+        const logEl = document.getElementById('log');
+        const alertEl = document.getElementById('alert');
+
+        function appendLog(msg) {
+            const t = new Date().toLocaleTimeString();
+            logEl.textContent += `[${t}] ${msg}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function applyRisk(level) {
+            riskEl.textContent = level;
+            riskEl.className = 'pill ' + (level === '위험' ? 'risk' : level === '주의' ? 'warn' : 'ok');
+        }
+
+        function start() {
+            if (ws && ws.readyState < 2) return;
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            ws = new WebSocket(`${proto}://${location.host}/ws/live-muse`);
+
+            ws.onopen = () => {
+                conn.textContent = '연결됨';
+                appendLog('실시간 스트림 시작');
+            };
+            ws.onclose = () => {
+                conn.textContent = '연결 종료';
+                appendLog('스트림 종료');
+            };
+            ws.onerror = () => {
+                conn.textContent = '연결 오류';
+            };
+            ws.onmessage = (ev) => {
+                const data = JSON.parse(ev.data);
+                if (data.type === 'status') {
+                    appendLog(data.message);
+                    return;
+                }
+                if (data.type === 'error') {
+                    appendLog('ERROR: ' + data.detail);
+                    return;
+                }
+                if (data.type === 'tick') {
+                    scoreEl.textContent = Number(data.smoothed_score).toFixed(1);
+                    probRawEl.textContent = Number(data.prob_raw).toFixed(3);
+                    applyRisk(data.risk_level);
+                    if (data.should_alert) {
+                        alertEl.textContent = '경고 발생: 즉시 휴식 권장';
+                        alertEl.classList.add('on');
+                    } else {
+                        alertEl.textContent = '경고 없음';
+                        alertEl.classList.remove('on');
+                    }
+                    appendLog(`risk=${data.risk_level} score=${Number(data.smoothed_score).toFixed(1)} alert=${data.should_alert}`);
+                }
+            };
+        }
+
+        function stop() {
+            if (ws) ws.close();
+        }
+
+        document.getElementById('startBtn').onclick = start;
+        document.getElementById('stopBtn').onclick = stop;
+    </script>
+</body>
+</html>
+"""
+
+
 @app.on_event("startup")
 def _startup():
     # 모델 미리 로드 (실패하면 바로 알게)
@@ -501,6 +693,70 @@ async def ws_stream(websocket: WebSocket):
             )
     except WebSocketDisconnect:
         return
+
+
+@app.websocket("/ws/live-muse")
+async def ws_live_muse(websocket: WebSocket):
+    """
+    서버가 Muse LSL에서 직접 EEG를 읽어 추론/점수화한 결과를 브라우저로 푸시.
+    """
+    await websocket.accept()
+    reader = create_reader("muse2")
+    sess = StreamSession(uuid.uuid4().hex)
+    scorer = DrowsinessScorer(
+        window_size=60,
+        drowsy_threshold=0.70,
+        accumulated_time_limit=25.0,
+        instant_alert_threshold=0.95,
+        prob_is_awake=True,
+    )
+
+    try:
+        if not reader.connect():
+            await websocket.send_json({"type": "error", "detail": "Muse 연결 실패"})
+            return
+
+        await websocket.send_json({"type": "status", "message": "Muse 연결 성공"})
+
+        while True:
+            # blocking I/O는 event loop를 막지 않게 별도 스레드로 실행
+            chunk = await asyncio.to_thread(reader.read_chunk, 2.0)
+            if chunk is None:
+                await websocket.send_json({"type": "status", "message": "데이터 대기 중..."})
+                continue
+
+            raw = np.stack([chunk.af7, chunk.af8], axis=1).astype(np.float32)
+            new_results = sess.append(raw, HYS_HIGH_DEFAULT, HYS_LOW_DEFAULT, False)
+            if not new_results:
+                continue
+
+            latest = new_results[-1]
+            score_obj = scorer.score(
+                prob_raw=float(latest.prob_raw),
+                prob_scaled=(float(latest.prob_scaled) if latest.prob_scaled is not None else None),
+                state=int(latest.state),
+            )
+
+            await websocket.send_json(
+                {
+                    "type": "tick",
+                    "sequence_id": chunk.sequence_id,
+                    "prob_raw": float(latest.prob_raw),
+                    "prob_scaled": (float(latest.prob_scaled) if latest.prob_scaled is not None else None),
+                    "state": int(latest.state),
+                    "instant_score": float(score_obj.instant_score),
+                    "smoothed_score": float(score_obj.smoothed_score),
+                    "risk_level": score_obj.risk_level,
+                    "should_alert": bool(score_obj.should_alert),
+                }
+            )
+
+    except WebSocketDisconnect:
+        return
+    except Exception as e:
+        await websocket.send_json({"type": "error", "detail": str(e)})
+    finally:
+        reader.disconnect()
 
 
 # ============================================================

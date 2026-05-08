@@ -2,7 +2,7 @@
 졸음운전 점수화 로직
 ==================
 FastAPI 서버에서 받은 window별 확률/상태를 기반으로
-실시간 졸음운전 위험도 점수를 계산합니다.
+실시간 졸음운전 위험도 점수를 계산.
 
 사용처: Jetson Orin Nano + OpenCV에서 1초 단위로 호출
 """
@@ -43,11 +43,13 @@ class DrowsinessScorer:
         drowsy_threshold: float = 0.55,  # 이 이상이면 졸음 판정
         accumulated_time_limit: float = 20.0,  # 30초 중 20초 이상 졸음 = 위험
         instant_alert_threshold: float = 0.80,  # 순간 확률이 이 이상 = 즉시 경고
+        prob_is_awake: bool = True,      # True면 입력 확률을 "각성 확률"로 간주
     ):
         self.window_size = window_size
         self.drowsy_threshold = drowsy_threshold
         self.accumulated_time_limit = accumulated_time_limit
         self.instant_alert_threshold = instant_alert_threshold
+        self.prob_is_awake = prob_is_awake
         
         # 최근 window_size개 윈도우의 확률값 저장 (평활화용)
         self.prob_history = deque(maxlen=window_size)
@@ -73,11 +75,14 @@ class DrowsinessScorer:
         current_time = time.time()
         
         # === 1. 즉각 점수 (현재 윈도우만 기반) ===
-        prob_for_scoring = prob_scaled if prob_scaled is not None else prob_raw
-        instant_score = prob_for_scoring * 100  # 0~100 스케일
+        # API 기본 출력은 각성 확률로 가정하고, 점수화는 졸림 확률로 계산한다.
+        prob_value = prob_scaled if prob_scaled is not None else prob_raw
+        drowsy_prob = (1.0 - prob_value) if self.prob_is_awake else prob_value
+        drowsy_prob = float(max(0.0, min(1.0, drowsy_prob)))
+        instant_score = drowsy_prob * 100  # 0~100 스케일
         
         # === 2. 확률값 히스토리 업데이트 ===
-        self.prob_history.append(prob_for_scoring)
+        self.prob_history.append(drowsy_prob)
         
         # === 3. 평활화 점수 (최근 window_size개 평균) ===
         if len(self.prob_history) > 0:
@@ -86,9 +91,8 @@ class DrowsinessScorer:
             smoothed_score = instant_score
         
         # === 4. 상태 히스토리 업데이트 ===
-        # state=0: 수면(확률 낮음), state=1: 각성(확률 높음)
-        # 하지만 실제로는 prob_raw로 판정하는 게 더 정확
-        is_drowsy_now = prob_for_scoring > self.drowsy_threshold
+        # 졸림 판정은 "졸림 확률" 기준
+        is_drowsy_now = drowsy_prob > self.drowsy_threshold
         self.state_history.append(1 if is_drowsy_now else 0)
         self.state_timestamps.append(current_time)
         

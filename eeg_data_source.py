@@ -179,19 +179,21 @@ class MUSE2Reader(EEGReader):
         self.sample_rate = 256
         self.inlet = None
         self._simulate = False
+        self._seq = 0
     
     def connect(self) -> bool:
         """LSL 스트림 연결"""
         try:
             # 우선 pylsl이 설치되어 있으면 LSL 스트림을 시도한다.
             try:
-                from pylsl import resolve_stream, StreamInlet
+                from pylsl import resolve_streams, StreamInlet
             except Exception:
-                resolve_stream = None
+                resolve_streams = None
                 StreamInlet = None
 
-            if resolve_stream is not None and StreamInlet is not None:
-                streams = resolve_stream('type', 'EEG')
+            if resolve_streams is not None and StreamInlet is not None:
+                all_streams = resolve_streams(wait_time=2)
+                streams = [s for s in all_streams if s.type().upper() == 'EEG']
                 if not streams:
                     # LSL 스트림이 없으면 시뮬레이션 모드로 전환
                     self._simulate = True
@@ -242,22 +244,40 @@ class MUSE2Reader(EEGReader):
             t = np.arange(n) / float(self.sample_rate)
             af7 = (15.0 * np.sin(2 * np.pi * 10 * t) + 5.0 * np.sin(2 * np.pi * 20 * t) + np.random.normal(0, 8, n)).astype(float).tolist()
             af8 = (12.0 * np.sin(2 * np.pi * 10 * t + 0.5) + 4.0 * np.sin(2 * np.pi * 20 * t) + np.random.normal(0, 8, n)).astype(float).tolist()
-            return EEGChunk(af7=af7, af8=af8, timestamp=time.time(), sequence_id=self.chunk_count)
+            # 실제 장비처럼 1초 간격으로 청크를 생성
+            time.sleep(1.0)
+            chunk = EEGChunk(af7=af7, af8=af8, timestamp=time.time(), sequence_id=self._seq)
+            self._seq += 1
+            return chunk
 
         try:
-            # LSL에서 샘플을 하나씩 pull
+            # LSL에서 chunk 단위로 받아 256샘플을 누적
             samples_af7 = []
             samples_af8 = []
-            for _ in range(self.sample_rate):
-                sample, ts = self.inlet.pull_sample(timeout=timeout / float(self.sample_rate))
-                if not sample:
-                    # 타임아웃: 반환하지 않음
-                    return None
-                # AF7, AF8가 첫 두 채널이라고 가정
-                samples_af7.append(float(sample[0]))
-                samples_af8.append(float(sample[1]))
+            deadline = time.time() + timeout
 
-            return EEGChunk(af7=samples_af7, af8=samples_af8, timestamp=time.time(), sequence_id=self.chunk_count)
+            while len(samples_af7) < self.sample_rate:
+                remaining = max(0.0, deadline - time.time())
+                if remaining <= 0:
+                    return None
+
+                max_need = self.sample_rate - len(samples_af7)
+                chunk_samples, _ = self.inlet.pull_chunk(timeout=min(0.2, remaining), max_samples=max_need)
+                if not chunk_samples:
+                    continue
+
+                for sample in chunk_samples:
+                    if len(sample) < 2:
+                        continue
+                    # AF7, AF8가 첫 두 채널이라고 가정
+                    samples_af7.append(float(sample[0]))
+                    samples_af8.append(float(sample[1]))
+                    if len(samples_af7) >= self.sample_rate:
+                        break
+
+            chunk = EEGChunk(af7=samples_af7[:self.sample_rate], af8=samples_af8[:self.sample_rate], timestamp=time.time(), sequence_id=self._seq)
+            self._seq += 1
+            return chunk
         except Exception as e:
             print(f"{self.name}: read_chunk 실패 - {e}")
             return None

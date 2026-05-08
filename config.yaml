@@ -4,12 +4,11 @@
 # EEG 데이터 소스
 # ================================================
 eeg_source:
-  type: file              # muse2, file, tcp 중 선택
+  type: muse2              # muse2, file, tcp 중 선택
   
   # 파일 소스 예제
   kwargs:
-    filepath: test_data.csv
-    loop: true            # 반복 재생
+    device_name: "Muse"
 
   # MUSE2 소스 예제 (주석 제거해서 사용)
   # type: muse2
@@ -53,7 +52,7 @@ alert:
 # UI 설정
 # ================================================
 ui:
-  display_type: opencv            # opencv, web, headless 중 선택
+  display_type: headless          # opencv, web, headless 중 선택
   fps: 10                         # UI 갱신 주기 (프레임/초)
   show_stats: true                # 통계 표시 여부
 

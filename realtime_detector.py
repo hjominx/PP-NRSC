@@ -19,12 +19,16 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Optional, Callable
 
-import cv2
+try:
+    import cv2
+except Exception:
+    cv2 = None
 import numpy as np
 import requests
 
 from drowsiness_scorer import DrowsinessScorer, DrowsinessScore
 from eeg_data_source import EEGReader, EEGChunk, create_reader
+from alert_handlers import create_alert_callback
 
 
 @dataclass
@@ -256,10 +260,10 @@ def main():
           f"API={config.api.url}")
     
     # ===== 감지기 초기화 =====
+    alert_cb = create_alert_callback(config.alert)
     detector = RealtimeDrowsinessDetector(
         api_url=config.api.url,
-        alert_callback=lambda s: print(f"  ⚠️ ALERT! {s.risk_level} | score={s.smoothed_score:.1f}")
-        if config.alert.enabled else None,
+        alert_callback=alert_cb,
     )
     
     if not detector.start_session():
