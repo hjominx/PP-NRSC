@@ -24,8 +24,6 @@ from typing import Tuple
 
 
 class AdvancedPreprocessor:
-    """Muse2 EEG를 위한 고급 전처리 엔진"""
-    
     FS = 256  # 샘플레이트
     
     def __init__(self, verbose: bool = False):
