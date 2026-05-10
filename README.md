@@ -1,62 +1,60 @@
-# Neuro Sync - AI Sleep/Drowsiness Detection
+# Neuro Sync - AI 기반 졸음운전 감지 시스템
 
-A real-time EEG-based drowsiness detection system for Muse2. The system analyzes AF7/AF8 channels, applies preprocessing, and infers alertness state using a TensorFlow model.
+Muse2 EEG 데이터를 실시간으로 분석하여 졸음/각성 상태를 예측하는 프로젝트입니다. AF7/AF8 채널을 전처리하고 TensorFlow 모델로 추론한 뒤, 점수화 및 위험도 판단을 수행합니다.
 
-## Features
+## 주요 기능
 
-- Real-time inference with 1 Hz update rate
-- Advanced preprocessing for noise and artifact reduction
-- Modular architecture: FastAPI server, scoring engine, and monitoring tools
-- Supports multiple input sources: Muse2, CSV files, TCP
-- Includes data analysis and validation utilities
+- 실시간 추론: 1초마다 윈도우 예측
+- 고급 전처리: 노이즈, 아티팩트 제거
+- 모듈형 구조: FastAPI 서버 + 점수화 엔진 + 모니터링
+- 입력 지원: Muse2, CSV 파일, TCP
+- 데이터 분석 및 검증 도구 포함
 
-## Performance Metrics
+## 성능 지표
 
-| Metric | Value | Notes |
-|-------|------|-------|
-| Accuracy | 55% | Awake/Sleep classification accuracy |
-| Precision | 54% | Sleep prediction precision |
-| Recall | 67% | Sleep detection sensitivity |
-| Latency | ~5 sec | Based on 5-second window size |
-| Update rate | 1 Hz | One window per second |
-| Memory | ~800 MB | Includes TensorFlow model |
+| 항목 | 값 | 설명 |
+|------|-----|------|
+| 정확도 | 55% | Awake/Sleep 분류 정확도 |
+| 정밀도 | 54% | Sleep 예측 정확도 |
+| 재현율 | 67% | Sleep 감지 민감도 |
+| 지연 시간 | 약 5초 | 5초 윈도우 기준 |
+| 갱신 주기 | 1Hz | 초당 1회 판정 |
+| 메모리 | 약 800MB | TensorFlow 모델 포함 |
 
-## Architecture
+## 시스템 구조
 
 ```
-Muse2 headset (256Hz EEG)
+Muse2 헤드셋 (256Hz EEG)
          |
-         | AF7, AF8 channels
+         | AF7, AF8 채널
          v
-   Advanced preprocessing
-   - bandpass filter (0.5-40Hz)
-   - 60Hz notch filter
-   - EOG artifact rejection
-   - signal quality scoring
-         |
-         v
-   TensorFlow inference model
-   - CNN-LSTM architecture
-   - real-time prediction
-   - probability output
+   고급 전처리
+   - 밴드패스 필터 (0.5-40Hz)
+   - 60Hz 노치 필터
+   - EOG 아티팩트 제거
+   - 신호 품질 평가
          |
          v
-   Scoring engine
-   - hysteresis smoothing
-   - moving average smoothing
-   - accumulated drowsy time
-   - risk level output
+   TensorFlow 모델
+   - CNN-LSTM 기반 추론
+   - 확률 값 출력
          |
          v
-   Alert system
-   - visual/audio alerts
-   - OpenCV dashboard
-   - optional remote integration
+   점수화 엔진
+   - 히스테리시스 적용
+   - 평활화 및 누적 졸음 시간 계산
+   - 위험도 레벨 산출
+         |
+         v
+   경고 시스템
+   - 시각/청각 알림
+   - OpenCV 대시보드
+   - 원격 연동 선택 가능
 ```
 
-## Installation and Run
+## 설치 및 실행
 
-### 1. Setup environment
+### 1. 환경 설정
 
 ```bash
 python3 -m venv .venv
@@ -64,30 +62,28 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Prepare model
+### 2. 모델 준비
 
 ```bash
 export MUSE_MODEL_PATH=/path/to/MUSE_activity_model.keras
-# or use the dummy model for testing
+# 테스트용 더미 모델
 export MUSE_MODEL_PATH=dummy_model.keras
 ```
 
-### 3. Start server
+### 3. 서버 실행
 
 ```bash
 python muse_inference_api.py
 curl http://localhost:8000/health
 ```
 
-### 4. Run realtime detection
+### 4. 실시간 감지 실행
 
 ```bash
 python realtime_detector.py
 ```
 
-## Test and Validation
-
-### Accuracy test
+## 테스트 및 검증
 
 ```bash
 python test_accuracy_improvement.py
@@ -95,57 +91,57 @@ python test_api.py
 python validate_eeg.py --source file --file awake_study.csv
 ```
 
-### Data used
+## 사용 데이터
 
-- `awake_study.csv`, `awake_study2.csv`, `awake_study3.csv`, `awake_study4.csv` (awake)
-- `bedtime.csv`, `bedtime2.csv` (drowsy)
+- `awake_study.csv`, `awake_study2.csv`, `awake_study3.csv`, `awake_study4.csv` (깨어있는 상태)
+- `bedtime.csv`, `bedtime2.csv` (졸음 상태)
 
-### Current status
+## 현재 진행 상황
 
-- FastAPI inference pipeline: completed
-- Real-time preprocessing and prediction: completed
-- Scoring and risk calculation: completed
-- Added awake_study4.csv data: completed
-- Remaining: model path validation and deployment testing
+- FastAPI 추론 파이프라인 구현: 완료
+- 실시간 전처리 및 예측: 완료
+- 점수화 로직 연결: 완료
+- `awake_study4.csv` 추가 반영: 완료
+- 남은 작업: 모델 경로 확인 및 배포 검증
 
-## Project Structure
+## 프로젝트 구조
 
 ```
 nrsc/
-├── muse_inference_api.py       # FastAPI inference server
-├── drowsiness_scorer.py        # scoring and risk logic
-├── realtime_detector.py        # realtime monitoring client
-├── test_api.py                 # API smoke test
-├── advanced_preprocessing.py   # EEG preprocessing
-├── advanced_postprocessing.py  # postprocessing and quality filtering
-├── analyze_improvements.py     # analysis of preprocessing improvements
-├── test_preprocessing_quality.py # preprocessing quality tests
-├── eeg_data_source.py          # EEG data input/output
-├── config.py                   # configuration management
-├── config.yaml                 # YAML configuration
-├── validate_eeg.py             # data validation tool
-├── train_muse_model_v2.py      # model training script
-├── dummy_model.keras           # test model
-├── test_accuracy_improvement.py # accuracy evaluation
-├── README.md                   # project documentation
-├── IMPROVEMENTS_V2.md          # improvement notes
-├── PROTOCOL.md                 # API protocol notes
-├── CHECKLIST.md                # development checklist
-├── INTEGRATION.md              # integration guide
-├── alert_handlers.py           # alert handling utilities
-├── local_realtime.py           # local testing tool
-└── requirements.txt            # Python dependencies
+├── muse_inference_api.py       # FastAPI 추론 서버
+├── drowsiness_scorer.py        # 점수화 및 위험도 로직
+├── realtime_detector.py        # 실시간 모니터링 클라이언트
+├── test_api.py                 # API 스모크 테스트
+├── advanced_preprocessing.py   # EEG 전처리
+├── advanced_postprocessing.py  # 후처리 및 품질 필터링
+├── analyze_improvements.py     # 전처리 개선 분석
+├── test_preprocessing_quality.py # 전처리 품질 검증
+├── eeg_data_source.py          # EEG 데이터 입출력
+├── config.py                   # 설정 관리
+├── config.yaml                 # YAML 설정 파일
+├── validate_eeg.py             # 데이터 검증 도구
+├── train_muse_model_v2.py      # 모델 학습 스크립트
+├── dummy_model.keras           # 테스트 모델
+├── test_accuracy_improvement.py # 정확도 평가
+├── README.md                   # 프로젝트 문서
+├── IMPROVEMENTS_V2.md          # 개선 사항 정리
+├── PROTOCOL.md                 # API 프로토콜 문서
+├── CHECKLIST.md                # 개발 체크리스트
+├── INTEGRATION.md              # 통합 가이드
+├── alert_handlers.py           # 경고 처리 유틸리티
+├── local_realtime.py           # 로컬 테스트 도구
+└── requirements.txt            # Python 의존성
 ```
 
-## API Endpoints
+## API 엔드포인트
 
 ### GET /health
-Check service status and model load state.
+서비스 상태와 모델 로드 상태 확인
 
 ### POST /predict/batch
-Batch prediction from JSON input.
+JSON 입력으로 배치 추론 수행
 
-Example:
+예시:
 
 ```json
 {
@@ -156,14 +152,14 @@ Example:
 ```
 
 ### POST /session/start → /session/{id}/append → /session/{id}/end
-Streaming session endpoints for realtime data.
+스트리밍 세션 방식으로 실시간 데이터를 전송하여 추론 처리
 
 ### WebSocket /ws/stream
-Low-latency realtime streaming endpoint.
+저지연 실시간 스트리밍 엔드포인트
 
-## Configuration
+## 설정
 
-Adjust system settings in `config.yaml`:
+`config.yaml`에서 시스템 설정을 조정합니다:
 
 ```yaml
 eeg_source:
@@ -184,141 +180,23 @@ alert:
   send_to_server: false
 ```
 
-## 🎯 개선 사항 (v2)
+## 개선 사항 (v2)
 
 ### 고급 전처리 적용 결과
-- **정확도 향상**: 49% → 55% (+6%p)
-- **Sleep 감지 개선**: 재현율 56% → 67% (+11%p)
-- **노이즈 대응**: 60Hz 노치 필터, EOG 아티팩트 제거
-- **품질 기반 판정**: 신호 품질을 고려한 동적 임계값
+- 정확도 49% → 55% 향상
+- Sleep 감지 재현율 56% → 67% 개선
+- 60Hz 노치 필터, EOG 아티팩트 제거 추가
+- 신호 품질 기반 동적 임계값 적용
 
-### 데이터 증강
-- 다중 CSV 파일 통합 (5개 파일, 9351개 윈도우)
-- 클래스 균형 맞추기 (각 클래스당 2684개 샘플)
-- 다양한 시간대 데이터 수집
+### 데이터 확장
+- 다중 CSV 파일 통합
+- 클래스 균형 조정
+- 다양한 조건의 데이터 수집
 
-## 📄 라이선스
+## 라이선스
 
 이 프로젝트는 MIT 라이선스를 따릅니다.
 
 ---
 
-**⚠️ 주의사항**: 이 시스템은 연구/프로토타입 용도로만 사용하세요. 실제 운전 환경에서는 전문가의 검증을 받아야 합니다.
-import requests
-
-def alert_handler(score):
-    if score.risk_level == "위험":
-        # 경고음 재생
-        os.system("aplay /path/to/alarm.wav")
-        
-        # GPIO를 통한 진동 모터 제어
-        os.system("echo 1 > /sys/class/gpio/gpio17/value")
-        
-        # 원격 서버에 알림 전송
-        requests.post("https://alert.server.com/incident", json={
-            "level": score.risk_level,
-            "score": score.smoothed_score,
-            "timestamp": score.timestamp
-        })
-
-detector = RealtimeDrowsinessDetector(alert_callback=alert_handler)
-```
-
-### 성능 최적화
-
-GPU 활성화:
-```bash
-export CUDA_VISIBLE_DEVICES=0
-```
-
-메모리 부족 시 배치 크기 감소:
-```python
-# muse_inference_api.py 내부에서 수정
-model.predict(windows, batch_size=32)  # 기본값: 128
-```
-
----
-
-## 팀 협업
-
-### MUSE2 팀: EEG 데이터 수집
-
-`eeg_data_source.py`의 `MUSE2Reader` 클래스를 구현합니다.
-
-```python
-from eeg_data_source import MUSE2Reader
-
-reader = MUSE2Reader()
-reader.connect()
-chunk = reader.read_chunk()
-```
-
-검증:
-```bash
-python validate_eeg.py --source muse2
-```
-
-### Jetson 팀: 실시간 감지
-
-```bash
-python realtime_detector.py
-```
-
-참고 자료: [PROTOCOL.md](PROTOCOL.md)
-
----
-
-## 문제 해결
-
-| 문제 | 해결 방법 |
-|------|----------|
-| 모델 파일 없음 | `export MUSE_MODEL_PATH=/path` 설정 |
-| 포트 8000 사용 중 | `lsof -i :8000 \| xargs kill -9` |
-| 메모리 부족 | `uvicorn` 실행 시 `--workers 1` 옵션 사용 |
-| 점수 항상 0 | API 상태 확인: `curl http://localhost:8000/health` |
-| 경고 미작동 | `config.yaml`에서 `alert.enabled: true` 확인 |
-
----
-
-## 기술 사양
-
-| 항목 | 값 |
-|------|-----|
-| EEG 채널 | AF7, AF8 (MUSE2) |
-| 샘플 레이트 | 256Hz |
-| 윈도우 크기 | 5초 (1280개 샘플) |
-| 윈도우 슬라이드 간격 | 1초 (256개 샘플) |
-| 전처리 | Bandpass 필터 (0.5~40Hz) → Median 제거 → Z-score 정규화 |
-| 신경망 프레임워크 | TensorFlow Keras |
-| 웹 프레임워크 | FastAPI |
-| 클라이언트 프레임워크 | OpenCV |
-
----
-
-## 알려진 제한사항
-
-- 정확도 53%: MUSE2 센서의 높은 노이즈로 인함 (개선 진행 중)
-- 메모리: 멀티 워커 환경에서는 Redis 기반 백엔드 필요
-- 지연시간: 5초 윈도우로 인한 구조적 지연 (빠른 반응 필요 시 별도 협의)
-
----
-
-## 참고 문서
-
-| 문서 | 설명 |
-|------|------|
-| PROTOCOL.md | 팀 간 통신 규약 및 EEGChunk 데이터 포맷 |
-| CHECKLIST.md | 단계별 구현 및 배포 가이드 |
-| INTEGRATION.md | 전체 시스템 통합 설명 |
-
----
-
-## 라이센스
-
-각 팀별로 상이 — 담당자에 문의
-
----
-
-## 지원
-
-문제 발생 시 위 문제 해결 섹션을 참고하거나 관련 문서를 확인합니다.
+**주의**: 이 시스템은 연구/프로토타입 용도입니다. 실제 운전 환경에서는 전문가 검증이 필요합니다.
