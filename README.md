@@ -1,183 +1,151 @@
-# Neuro Sync - AI 기반 졸음운전 감지 시스템
+# Neuro Sync - AI Sleep/Drowsiness Detection
 
-**실시간 EEG 기반 졸음운전 감지 안전장치**
+A real-time EEG-based drowsiness detection system for Muse2. The system analyzes AF7/AF8 channels, applies preprocessing, and infers alertness state using a TensorFlow model.
 
-Muse2 EEG 헤드셋을 활용하여 운전자의 뇌파를 실시간 분석하고 졸음운전을 감지하여 즉시 경고하는 AI 시스템입니다.
+## Features
 
-## 🚀 주요 특징
+- Real-time inference with 1 Hz update rate
+- Advanced preprocessing for noise and artifact reduction
+- Modular architecture: FastAPI server, scoring engine, and monitoring tools
+- Supports multiple input sources: Muse2, CSV files, TCP
+- Includes data analysis and validation utilities
 
-- **실시간 감지**: 1초 단위로 뇌파 분석 및 졸음 판정
-- **고급 전처리**: 노이즈 제거, 아티팩트 필터링, 신호 품질 최적화
-- **높은 정확도**: 55% 정확도 (기본 전처리 대비 6%p 향상)
-- **모듈식 아키텍처**: FastAPI 서버 + 점수화 엔진 + UI 컴포넌트
-- **다양한 데이터 소스**: Muse2, 파일, TCP 네트워크 지원
+## Performance Metrics
 
-## 📊 성능 지표
+| Metric | Value | Notes |
+|-------|------|-------|
+| Accuracy | 55% | Awake/Sleep classification accuracy |
+| Precision | 54% | Sleep prediction precision |
+| Recall | 67% | Sleep detection sensitivity |
+| Latency | ~5 sec | Based on 5-second window size |
+| Update rate | 1 Hz | One window per second |
+| Memory | ~800 MB | Includes TensorFlow model |
 
-| 지표 | 값 | 설명 |
-|------|-----|------|
-| **정확도** | 55% | Awake/Sleep 분류 정확도 |
-| **정밀도** | 54% | Sleep 예측의 정확성 |
-| **재현율** | 67% | Sleep 감지 민감도 |
-| **반응 속도** | ~5초 | 윈도우 크기 기준 |
-| **갱신 주기** | 1Hz | 1초마다 판정 |
-| **메모리 사용** | ~800MB | TensorFlow 모델 포함 |
-
-## 🏗️ 시스템 아키텍처
+## Architecture
 
 ```
-Muse2 헤드셋 (256Hz EEG)
+Muse2 headset (256Hz EEG)
          |
-         | AF7, AF8 채널
+         | AF7, AF8 channels
          v
-   고급 전처리 엔진
-   - 밴드패스 필터 (0.5~40Hz)
-   - 60Hz 노치 필터
-   - EOG 아티팩트 제거
-   - 신호 품질 평가
-         |
-         v
-   TensorFlow 모델
-   - CNN-LSTM 아키텍처
-   - 실시간 추론
-   - 확률값 출력
+   Advanced preprocessing
+   - bandpass filter (0.5-40Hz)
+   - 60Hz notch filter
+   - EOG artifact rejection
+   - signal quality scoring
          |
          v
-   점수화 엔진
-   - 히스테리시스 필터링
-   - 이동평균 평활화
-   - 누적 졸음시간 계산
-   - 위험도 판정
+   TensorFlow inference model
+   - CNN-LSTM architecture
+   - real-time prediction
+   - probability output
          |
          v
-   경고 시스템
-   - 시각/청각/진동 경고
-   - OpenCV 대시보드
-   - 원격 서버 연동
+   Scoring engine
+   - hysteresis smoothing
+   - moving average smoothing
+   - accumulated drowsy time
+   - risk level output
+         |
+         v
+   Alert system
+   - visual/audio alerts
+   - OpenCV dashboard
+   - optional remote integration
 ```
 
-## 📦 설치 및 실행
+## Installation and Run
 
-### 1. 환경 설정
+### 1. Setup environment
 
 ```bash
-# 가상환경 생성 및 활성화
 python3 -m venv .venv
 source .venv/bin/activate
-
-# 의존성 설치
 pip install -r requirements.txt
 ```
 
-### 2. 모델 준비
+### 2. Prepare model
 
 ```bash
-# 환경변수 설정 (실제 모델 경로로 변경)
 export MUSE_MODEL_PATH=/path/to/MUSE_activity_model.keras
-
-# 또는 더미 모델 사용 (테스트용)
+# or use the dummy model for testing
 export MUSE_MODEL_PATH=dummy_model.keras
 ```
 
-### 3. 서버 실행
+### 3. Start server
 
 ```bash
-# FastAPI 서버 시작
 python muse_inference_api.py
-
-# 상태 확인
 curl http://localhost:8000/health
 ```
 
-### 4. 실시간 감지
+### 4. Run realtime detection
 
 ```bash
-# 새로운 터미널에서
 python realtime_detector.py
 ```
 
-## 🧪 테스트 및 검증
+## Test and Validation
 
-### 정확도 테스트
+### Accuracy test
 
 ```bash
-# 기본 vs 고급 전처리 비교
 python test_accuracy_improvement.py
-
-# API 기능 테스트
 python test_api.py
-
-# 데이터 품질 검증
 python validate_eeg.py --source file --file awake_study.csv
 ```
 
-### 데이터 수집
+### Data used
 
-현재 시스템은 다음 데이터를 사용합니다:
-- `awake_study.csv`, `awake_study2.csv`, `awake_study3.csv`, `awake_study4.csv` (깨어있는 상태)
-- `bedtime.csv`, `bedtime2.csv` (졸음 상태)
+- `awake_study.csv`, `awake_study2.csv`, `awake_study3.csv`, `awake_study4.csv` (awake)
+- `bedtime.csv`, `bedtime2.csv` (drowsy)
 
-### 현재 진행 상태
+### Current status
 
-- FastAPI 서버 구현: 완료
-- 실시간 추론 + 전처리 파이프라인: 완료
-- 점수화 로직 연결: 완료
-- 추가 데이터(`awake_study4.csv`) 반영: 완료
-- 남은 작업: 모델 파일 경로/배포 검증 및 운영 테스트
+- FastAPI inference pipeline: completed
+- Real-time preprocessing and prediction: completed
+- Scoring and risk calculation: completed
+- Added awake_study4.csv data: completed
+- Remaining: model path validation and deployment testing
 
-더 많은 데이터를 수집하려면:
-```bash
-# 30분씩 3번 측정 추천 (총 90분)
-# 다양한 시간대에 측정하여 circadian rhythm 반영
-```
-
-## 📁 프로젝트 구조
+## Project Structure
 
 ```
 nrsc/
-├── 🧠 핵심 엔진
-│   ├── muse_inference_api.py       # FastAPI 추론 서버
-│   ├── drowsiness_scorer.py        # 점수화 및 판정 로직
-│   ├── realtime_detector.py        # 실시간 UI 및 경고
-│   └── test_api.py                 # API 테스트 도구
-│
-├── 🔧 전처리 및 분석
-│   ├── advanced_preprocessing.py   # 고급 EEG 전처리
-│   ├── advanced_postprocessing.py  # 품질 기반 후처리
-│   ├── analyze_improvements.py     # 개선 효과 분석
-│   └── test_preprocessing_quality.py # 품질 검증
-│
-├── 📊 데이터 및 설정
-│   ├── eeg_data_source.py          # EEG 데이터 입출력
-│   ├── config.py                   # 설정 관리
-│   ├── config.yaml                 # YAML 설정 파일
-│   └── validate_eeg.py             # 데이터 검증 도구
-│
-├── 🎯 모델 및 학습
-│   ├── train_muse_model_v2.py      # 모델 학습 스크립트
-│   ├── dummy_model.keras           # 테스트용 모델
-│   └── test_accuracy_improvement.py # 정확도 평가
-│
-├── 📋 문서
-│   ├── README.md                   # 이 파일
-│   ├── IMPROVEMENTS_V2.md          # 개선 사항 상세
-│   ├── PROTOCOL.md                 # 통신 프로토콜
-│   ├── CHECKLIST.md                # 개발 체크리스트
-│   └── INTEGRATION.md              # 시스템 통합 가이드
-│
-└── ⚙️ 유틸리티
-    ├── alert_handlers.py           # 경고 처리기
-    ├── local_realtime.py           # 로컬 테스트 도구
-    └── requirements.txt            # Python 의존성
+├── muse_inference_api.py       # FastAPI inference server
+├── drowsiness_scorer.py        # scoring and risk logic
+├── realtime_detector.py        # realtime monitoring client
+├── test_api.py                 # API smoke test
+├── advanced_preprocessing.py   # EEG preprocessing
+├── advanced_postprocessing.py  # postprocessing and quality filtering
+├── analyze_improvements.py     # analysis of preprocessing improvements
+├── test_preprocessing_quality.py # preprocessing quality tests
+├── eeg_data_source.py          # EEG data input/output
+├── config.py                   # configuration management
+├── config.yaml                 # YAML configuration
+├── validate_eeg.py             # data validation tool
+├── train_muse_model_v2.py      # model training script
+├── dummy_model.keras           # test model
+├── test_accuracy_improvement.py # accuracy evaluation
+├── README.md                   # project documentation
+├── IMPROVEMENTS_V2.md          # improvement notes
+├── PROTOCOL.md                 # API protocol notes
+├── CHECKLIST.md                # development checklist
+├── INTEGRATION.md              # integration guide
+├── alert_handlers.py           # alert handling utilities
+├── local_realtime.py           # local testing tool
+└── requirements.txt            # Python dependencies
 ```
 
-## 🔧 API 엔드포인트
+## API Endpoints
 
 ### GET /health
-시스템 상태 및 모델 로드 확인
+Check service status and model load state.
 
 ### POST /predict/batch
-배치 추론 (JSON 입력)
+Batch prediction from JSON input.
+
+Example:
 
 ```json
 {
@@ -188,35 +156,32 @@ nrsc/
 ```
 
 ### POST /session/start → /session/{id}/append → /session/{id}/end
-실시간 스트리밍 세션
+Streaming session endpoints for realtime data.
 
 ### WebSocket /ws/stream
-저지연 실시간 스트리밍
+Low-latency realtime streaming endpoint.
 
-## ⚙️ 설정
+## Configuration
 
-`config.yaml`에서 시스템 설정 조정:
+Adjust system settings in `config.yaml`:
 
 ```yaml
-# EEG 데이터 소스
 eeg_source:
-  type: muse2                    # muse2 | file | tcp
+  type: muse2
   kwargs:
     device_name: "Muse"
 
-# 점수화 임계값
 scorer:
-  window_size: 30                # 평활화 윈도우
-  drowsy_threshold: 0.55         # 졸음 판정 기준
-  instant_alert_threshold: 0.80  # 즉시 경고 기준
-  accumulated_time_limit: 20.0   # 누적 시간 제한
+  window_size: 30
+  drowsy_threshold: 0.55
+  instant_alert_threshold: 0.80
+  accumulated_time_limit: 20.0
 
-# 경고 설정
 alert:
   enabled: true
-  alarm_file: null               # 경고음 파일
-  gpio_pin: null                 # 진동 모터 핀
-  send_to_server: false         # 원격 서버 연동
+  alarm_file: null
+  gpio_pin: null
+  send_to_server: false
 ```
 
 ## 🎯 개선 사항 (v2)
