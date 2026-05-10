@@ -19,6 +19,9 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
+# 모델 경로 설정
+os.environ["MUSE_MODEL_PATH"] = "dummy_model.keras"
+
 # 모듈 임포트
 from muse_inference_api import preprocess, make_windows, predict_windows, minmax_scale, hysteresis, get_model
 from advanced_preprocessing import AdvancedPreprocessor
@@ -420,7 +423,7 @@ def main(args):
     print("\n📂 테스트 데이터 로드...")
     
     # 여러 awake 파일 로드
-    awake_files = ['awake_study.csv', 'awake_study2.csv', 'awake_study3.csv']
+    awake_files = ['awake_study.csv', 'awake_study2.csv', 'awake_study3.csv', 'awake_study4.csv']
     X_awake_list = []
     y_awake_list = []
     

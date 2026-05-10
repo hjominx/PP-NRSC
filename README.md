@@ -114,8 +114,16 @@ python validate_eeg.py --source file --file awake_study.csv
 ### 데이터 수집
 
 현재 시스템은 다음 데이터를 사용합니다:
-- `awake_study.csv`, `awake_study2.csv`, `awake_study3.csv` (깨어있는 상태)
+- `awake_study.csv`, `awake_study2.csv`, `awake_study3.csv`, `awake_study4.csv` (깨어있는 상태)
 - `bedtime.csv`, `bedtime2.csv` (졸음 상태)
+
+### 현재 진행 상태
+
+- FastAPI 서버 구현: 완료
+- 실시간 추론 + 전처리 파이프라인: 완료
+- 점수화 로직 연결: 완료
+- 추가 데이터(`awake_study4.csv`) 반영: 완료
+- 남은 작업: 모델 파일 경로/배포 검증 및 운영 테스트
 
 더 많은 데이터를 수집하려면:
 ```bash

@@ -11,7 +11,7 @@ MUSE2 졸음운전 감지 모델 V2 - 향상된 학습 파이프라인
 
 사용법:
   python train_muse_model_v2.py \
-    --awake awake_study.csv awake_study2.csv awake_study3.csv \
+    --awake awake_study.csv awake_study2.csv awake_study3.csv awake_study4.csv \
     --sleep bedtime.csv bedtime2.csv \
     --output better_model.keras \
     --epochs 100
@@ -238,7 +238,8 @@ def extract_advanced_features(signal: np.ndarray, fs: int = FS) -> np.ndarray:
 def load_and_preprocess_csv(csv_files: list, label: int, 
                            window_size: int = 1280,  # 5초
                            stride: int = 256,        # 1초
-                           remove_artifacts: bool = True) -> tuple:
+                           remove_artifacts: bool = True,
+                           sample_size: int = None) -> tuple:
     """
     CSV 파일들을 로드하고 윈도우별로 전처리
     
@@ -290,6 +291,12 @@ def load_and_preprocess_csv(csv_files: list, label: int,
             
             windows.append(combined_features)
             labels.append(label)
+    
+    # 샘플 크기 제한 (속도 향상용)
+    if sample_size is not None and len(windows) > sample_size:
+        indices = np.random.choice(len(windows), sample_size, replace=False)
+        windows = [windows[i] for i in indices]
+        labels = [labels[i] for i in indices]
     
     return np.array(windows, dtype=np.float32), np.array(labels, dtype=np.int32)
 
@@ -378,14 +385,16 @@ def main(args):
     X_awake, y_awake = load_and_preprocess_csv(
         args.awake, 
         label=0,
-        remove_artifacts=True
+        remove_artifacts=True,
+        sample_size=args.sample_size
     )
     
     print("수면 상태 데이터:")
     X_sleep, y_sleep = load_and_preprocess_csv(
         args.sleep,
         label=1,
-        remove_artifacts=True
+        remove_artifacts=True,
+        sample_size=args.sample_size
     )
     
     # 데이터 결합
@@ -529,6 +538,8 @@ if __name__ == '__main__':
                        help='배치 크기')
     parser.add_argument('--augment', action='store_true',
                        help='데이터 증강 활성화')
+    parser.add_argument('--sample-size', type=int, default=None,
+                       help='각 파일당 최대 샘플 수 (속도 향상용)')
     
     args = parser.parse_args()
     main(args)
